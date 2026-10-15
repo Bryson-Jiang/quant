@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "strategy": "weekly_16_etf_fast_40_20_vol7_buffer4_top1_single30",
+  "adopted_on": "2026-10-06",
+  "selection_anchor_date": "2026-09-24",
+  "effective_signal_date": "2026-09-30",
+  "initial_risky_selection": ["159941", "159985", "159980"],
+  "source": "切换前6%无缓冲策略2026年9月24日周目标；用于新规则的可复现初始化",
+  "state_basis": "缓冲引用前次周目标选仓；每日查询从固定锚点逐周重放，不自动认定成交"
+}

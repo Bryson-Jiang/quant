@@ -1,0 +1,18 @@
+{
+  "date": "2026-09-28",
+  "total_equity": "60000.00",
+  "cash": "19540.50",
+  "other_assets": "0.00",
+  "positions": [
+    {
+      "symbol": "511260",
+      "shares": 300,
+      "last_price": "134.865",
+      "market_value": "40459.50",
+      "avg_cost": "134.000",
+      "unrealized_pnl": "259.50"
+    }
+  ],
+  "cash_flows": [],
+  "note": "仅为格式示例；总资产和持仓需要改成券商实际数据"
+}

@@ -1,0 +1,44 @@
+# 本地开发环境
+.idea/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 数据默认留在本机；仅共享策略初始化状态和空白配置示例。
+/data/*
+!/data/.gitkeep
+!/data/rotation_state.json
+!/data/tushare_token.example.txt
+
+# 账户明细、行情、生成报告及本地文档备份均不上传。
+/output/
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+*.db
+*.db-*
+
+# 凭证与本机配置
+.env
+.env.*
+!.env.example
+tushare_token.txt
+credentials.json
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
