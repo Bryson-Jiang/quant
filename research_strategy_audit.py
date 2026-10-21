@@ -116,7 +116,7 @@ def main() -> None:
     legacy = RiskConfig()
     fast = RiskConfig(short_momentum_days=20, long_momentum_days=40,
                       momentum_skip_days=0, trend_days=40)
-    current = RiskConfig.current_default()
+    current = RiskConfig.buffered_momentum()  # 冻结这份历史审计的原7%基线。
     old_frames = needed_frames(prices, legacy, store)
     new_frames = needed_frames(prices, current, store)
     variants = {

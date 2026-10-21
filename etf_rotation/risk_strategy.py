@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import pandas as pd
@@ -30,12 +30,23 @@ class RiskConfig:
     inverse_vol_exponent: float = 1.0
     rank_buffer_size: int | None = None
     mandatory_top_rank: int = 0
+    ma_reversion_days: int = 20
+    ma_reversion_strength: float = 0.0
 
     @classmethod
-    def current_default(cls, *, target_vol: float = 0.07,
+    def current_default(cls, *, target_vol: float = 0.08,
                         max_risky_weight: float = 0.70,
                         inverse_vol_exponent: float = 1.0) -> RiskConfig:
-        """2026-10-06 起：7%预算、前4名缓冲、必选合格池第1名。"""
+        """2026-10-18选择：8%预算、20日均线反转0.5、前4名缓冲必选第1名。"""
+        base = cls.buffered_momentum(target_vol=target_vol, max_risky_weight=max_risky_weight,
+                                     inverse_vol_exponent=inverse_vol_exponent)
+        return replace(base, ma_reversion_days=20, ma_reversion_strength=0.5)
+
+    @classmethod
+    def buffered_momentum(cls, *, target_vol: float = 0.07,
+                          max_risky_weight: float = 0.70,
+                          inverse_vol_exponent: float = 1.0) -> RiskConfig:
+        """冻结2026-10-06的7%纯动量缓冲基线，旧研究显式调用。"""
         return cls(target_vol=target_vol, max_risky_weight=max_risky_weight,
                    short_momentum_days=20, long_momentum_days=40,
                    momentum_skip_days=0, trend_days=40,
@@ -69,6 +80,8 @@ class RiskConfig:
             raise ValueError("单只风险 ETF 仓位上限必须在 (0, 1] 之间")
         if not 0 <= self.inverse_vol_exponent <= 1:
             raise ValueError("逆波动权重指数必须在 [0, 1] 之间")
+        if self.ma_reversion_days < 2 or not 0 <= self.ma_reversion_strength <= 1:
+            raise ValueError("均线反转窗口必须至少2日，强度必须在[0,1]之间")
         if not isinstance(self.mandatory_top_rank, int) or not 0 <= self.mandatory_top_rank <= self.max_risky_positions:
             raise ValueError("必选排名数量必须在0到风险持仓数量之间")
         if self.rank_buffer_size is None:
@@ -76,6 +89,21 @@ class RiskConfig:
                 raise ValueError("必选排名配置需要开启排名缓冲")
         elif not isinstance(self.rank_buffer_size, int) or self.rank_buffer_size < self.max_risky_positions:
             raise ValueError("排名缓冲范围不能小于风险持仓数量")
+
+
+def risk_score_components(short_momentum: pd.DataFrame, long_momentum: pd.DataFrame,
+                          volatility: pd.DataFrame, config: RiskConfig,
+                          ma_zscore: pd.DataFrame | None = None) -> dict[str, pd.DataFrame]:
+    """生产与评分解释共用：当日15只风险ETF原评分离散程度缩放有界反转分。"""
+    base = (0.50 * short_momentum + 0.50 * long_momentum) / volatility.clip(lower=0.05)
+    adjustment = pd.DataFrame(0.0, index=base.index, columns=base.columns)
+    if config.ma_reversion_strength:
+        if ma_zscore is None or not ma_zscore.index.equals(base.index) or not ma_zscore.columns.equals(base.columns):
+            raise ValueError("均线反转需要与动量评分严格对齐的ma_zscore")
+        spread = base.drop(columns=BOND).std(axis=1, ddof=1).fillna(0)
+        adjustment = ((-ma_zscore / 3).clip(-1, 1).fillna(0) * config.ma_reversion_strength).mul(spread, axis=0)
+        adjustment[BOND] = 0.0
+    return {"base_score": base, "ma_adjustment": adjustment, "score": base + adjustment}
 
 
 def priority_buffer_selection(ranked: pd.Index, previous: list[str], *,
@@ -103,7 +131,8 @@ def risk_controlled_signals(prices: pd.DataFrame, config: RiskConfig,
                             factor_frames: dict[FactorSpec, pd.DataFrame] | None = None,
                             *, score_overlay: pd.DataFrame | None = None,
                             initial_risky_selection: list[str] | None = None,
-                            initial_selection_date: pd.Timestamp | None = None) -> pd.DataFrame:
+                            initial_selection_date: pd.Timestamp | None = None,
+                            selection_resets: list[tuple[pd.Timestamp, list[str]]] | None = None) -> pd.DataFrame:
     """周目标最多三只风险ETF加国债。旧选仓只参与排名筛选，不覆盖绝对资格。
 
     切换时可指定截至某历史信号日的旧目标；仅在该日之后第一次信号前初始化。
@@ -127,7 +156,8 @@ def risk_controlled_signals(prices: pd.DataFrame, config: RiskConfig,
     bond_mom60 = factor(FactorSpec("momentum", 60))
     market_trend = trend120["510300"]
 
-    score = (0.50 * mom60 + 0.50 * mom120) / vol60.clip(lower=0.05)
+    ma_zscore = factor(FactorSpec("ma_zscore", config.ma_reversion_days)) if config.ma_reversion_strength else None
+    score = risk_score_components(mom60, mom120, vol60, config, ma_zscore)["score"]
     if score_overlay is not None:
         if not score_overlay.index.equals(prices.index) or not score_overlay.columns.equals(prices.columns):
             raise ValueError("score_overlay 必须与价格矩阵严格对齐")
@@ -139,21 +169,28 @@ def risk_controlled_signals(prices: pd.DataFrame, config: RiskConfig,
     risk_columns = [symbol for symbol in prices.columns if symbol != BOND]
     if (initial_risky_selection is None) != (initial_selection_date is None):
         raise ValueError("初始化选仓和日期必须同时提供")
+    resets = list(selection_resets or [])
     if initial_risky_selection is not None:
+        resets.append((initial_selection_date, initial_risky_selection))
+    normalized_resets = []
+    for reset_date, reset_selection in resets:
         if (config.rank_buffer_size is None
-                or len(initial_risky_selection) > config.max_risky_positions
-                or len(set(initial_risky_selection)) != len(initial_risky_selection)
-                or not set(initial_risky_selection).issubset(risk_columns)):
+                or len(reset_selection) > config.max_risky_positions
+                or len(set(reset_selection)) != len(reset_selection)
+                or not set(reset_selection).issubset(risk_columns)):
             raise ValueError("缓冲初始化选仓无效")
-        initial_selection_date = pd.Timestamp(initial_selection_date)
-        if pd.isna(initial_selection_date) or initial_selection_date.tzinfo is not None:
+        reset_date = pd.Timestamp(reset_date)
+        if pd.isna(reset_date) or reset_date.tzinfo is not None:
             raise ValueError("缓冲初始化日期无效")
-        if (prices.index[-1] > initial_selection_date
-                and initial_selection_date not in prices.index):
+        if prices.index[-1] > reset_date and reset_date not in prices.index:
             raise ValueError("价格历史必须覆盖缓冲初始化日期，不能从中途重建旧选仓")
+        normalized_resets.append((reset_date, list(reset_selection)))
+    normalized_resets.sort(key=lambda item: item[0])
+    if len({d for d, _ in normalized_resets}) != len(normalized_resets):
+        raise ValueError("缓冲初始化日期不能重复")
     rows: list[pd.Series] = []
     previous: list[str] = []
-    initialized = False
+    next_reset = 0
     returns = prices.pct_change(fill_method=None)
     for day in weekly_signal_dates(prices.index):
         row = pd.Series(0.0, index=prices.columns, name=day)
@@ -162,10 +199,9 @@ def risk_controlled_signals(prices: pd.DataFrame, config: RiskConfig,
         candidate = score.loc[day, risk_columns].where(eligible & (vol60.loc[day, risk_columns] > 0))
         ranked = candidate.dropna().sort_index().sort_values(ascending=False, kind="stable").index
         if config.rank_buffer_size is not None:
-            if (initial_risky_selection is not None and not initialized
-                    and day > initial_selection_date):
-                previous = list(initial_risky_selection)
-                initialized = True
+            while next_reset < len(normalized_resets) and day > normalized_resets[next_reset][0]:
+                previous = list(normalized_resets[next_reset][1])
+                next_reset += 1
             chosen = priority_buffer_selection(ranked, previous,
                                                mandatory_top=config.mandatory_top_rank,
                                                buffer_size=config.rank_buffer_size,

@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "strategy": "weekly_16_etf_fast_40_20_vol8_ma20a05_buffer4_top1_single30",
+  "adopted_on": "2026-10-18",
+  "selection_anchor_date": "2026-10-09",
+  "effective_signal_date": "2026-10-16",
+  "initial_risky_selection": [
+    "159941",
+    "512800",
+    "159985"
+  ],
+  "historical_selection_anchors": [
+    {
+      "selection_anchor_date": "2026-09-24",
+      "effective_signal_date": "2026-09-30",
+      "initial_risky_selection": [
+        "159941",
+        "159985",
+        "159980"
+      ]
+    }
+  ],
+  "source": "2026-10-18用户选择8%预算+20日均线反转0.5；用10月9日原7%方案周目标初始化，10月16日信号于10月19日执行。",
+  "state_basis": "缓冲引用前次周目标选仓；按时间重放各次切换锚点，不自动认定券商成交"
+}

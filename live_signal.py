@@ -10,10 +10,12 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from etf_rotation.config import ETF_NAMES, STRATEGY_NAME
-from etf_rotation.data import _client, load_close_prices
+from etf_rotation.config import CORE_STRATEGY_NAME, ETF_NAMES, PORTFOLIO_ETF_NAMES, STRATEGY_NAME
+from etf_rotation.data import _client
 from etf_rotation.factor_store import FactorStore
-from etf_rotation.risk_strategy import RiskConfig, risk_controlled_signals
+from etf_rotation.factors import FactorSpec, compute_factor
+from etf_rotation.risk_strategy import BOND, RiskConfig, risk_controlled_signals, risk_score_components
+from etf_rotation.portfolio_strategy import load_portfolio_data, portfolio_signals, satellite_details
 from etf_rotation.strategy_state import load_rotation_state
 
 
@@ -74,6 +76,35 @@ def latest_actionable_week(calendar: pd.DataFrame, as_of: date,
     return signal.date(), execution.date(), status
 
 
+def signal_score_details(prices: pd.DataFrame, config: RiskConfig, target: pd.Series,
+                         store: FactorStore | None = None) -> list[dict]:
+    """与正式选仓共用评分函数，解释信号日每只风险ETF的资格及排名。"""
+    def factor(spec):
+        return store.get(prices, spec) if store is not None else compute_factor(prices, spec)
+
+    short = factor(FactorSpec("momentum", config.short_momentum_days, config.momentum_skip_days))
+    long = factor(FactorSpec("momentum", config.long_momentum_days, config.momentum_skip_days))
+    trend = factor(FactorSpec("trend", config.trend_days))
+    vol = factor(FactorSpec("volatility", 60))
+    z = factor(FactorSpec("ma_zscore", config.ma_reversion_days)) if config.ma_reversion_strength else None
+    components = risk_score_components(short, long, vol, config, z)
+    day = target.name
+    risky = prices.columns.drop(BOND)
+    eligible = long.loc[day, risky].gt(0) & trend.loc[day, risky].gt(0) & vol.loc[day, risky].gt(0)
+    ranked = components["score"].loc[day, risky].where(eligible).dropna().sort_index().sort_values(ascending=False, kind="stable")
+    ranks = {symbol: i+1 for i, symbol in enumerate(ranked.index)}
+    rows = []
+    finite = lambda value: float(value) if pd.notna(value) else None
+    for symbol in list(ranked.index) + [s for s in risky if s not in ranked.index]:
+        rows.append({"symbol": symbol, "name": ETF_NAMES[symbol], "eligible": symbol in ranks,
+                     "rank": ranks.get(symbol), "base_score": finite(components["base_score"].at[day, symbol]),
+                     "ma_zscore": finite(z.at[day, symbol]) if z is not None else None,
+                     "ma_adjustment": finite(components["ma_adjustment"].at[day, symbol]),
+                     "score": finite(components["score"].at[day, symbol]),
+                     "target_weight": float(target[symbol])})
+    return rows
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--as-of", type=date.fromisoformat, default=None,
@@ -82,9 +113,10 @@ def main() -> None:
     parser.add_argument("--capital", type=float, default=None,
                         help="可选账户总资产（人民币），输出目标金额；不是下单数量")
     parser.add_argument("--target-vol", type=float, default=RiskConfig.current_default().target_vol,
-                        help="当前策略的年化风险仓波动预算，默认 7%%")
+                        help="核心轮动的年化风险仓波动预算，默认8%%；卫星叠加后不是全账户上限")
+    parser.add_argument("--show-scores", action="store_true", help="显示合格ETF的动量评分、均线修正与排名")
     parser.add_argument("--max-risky-weight", type=float, default=0.70,
-                        help="风险 ETF 总目标权重上限，默认 70%%")
+                        help="核心风险ETF目标上限，默认70%%；红利卫星另占最多30%%")
     parser.add_argument("--cache-dir", type=Path, default=ROOT / "data" / "cache")
     parser.add_argument("--state-file", type=Path, default=ROOT / "data" / "rotation_state.json",
                         help="排名缓冲切换记录；请保留并备份")
@@ -99,7 +131,8 @@ def main() -> None:
     calendar = trade_calendar(as_of, args.cache_dir / "tushare_trade_cal_SSE.csv",
                               offline=args.offline)
     signal_day, execution_day, status = latest_actionable_week(calendar, as_of, now)
-    prices = load_close_prices(date(2022, 1, 1), signal_day, args.cache_dir, offline=args.offline)
+    core_prices,satellite_history=load_portfolio_data(date(2022,1,1),signal_day,args.cache_dir,offline=args.offline)
+    prices=core_prices.copy();prices["512890"]=satellite_history["512890"].reindex(prices.index)
     if prices.index[-1].date() != signal_day or prices.iloc[-1].isna().any():
         missing = prices.columns[prices.iloc[-1].isna()].tolist()
         raise RuntimeError(f"信号日 {signal_day} 行情不完整；缺少 {missing}，不能发布实盘计划")
@@ -107,8 +140,10 @@ def main() -> None:
     config = RiskConfig.current_default(target_vol=args.target_vol,
                                         max_risky_weight=args.max_risky_weight)
     state = load_rotation_state(args.state_file)
-    signals = risk_controlled_signals(prices, config, store, **state.signal_kwargs(prices))
-    target = signals.loc[pd.Timestamp(signal_day)]
+    bundle=portfolio_signals(core_prices,satellite_history,state,config,store)
+    target=bundle.signals.loc[pd.Timestamp(signal_day)]
+    score_details=signal_score_details(core_prices,config,bundle.core_signals.loc[pd.Timestamp(signal_day)],store)
+    dividend=satellite_details(bundle,state,pd.Timestamp(signal_day))
     weights = {symbol: round(float(value), 6) for symbol, value in target.items() if value > 1e-8}
     cash = round(max(0.0, 1.0 - float(target.sum())), 6)
     lot_notional = {}
@@ -121,14 +156,19 @@ def main() -> None:
         lot_notional[symbol] = round(float(quote.iloc[0]) * 100, 2)
     plan = {
         "strategy": STRATEGY_NAME,
+        "applied_strategy": STRATEGY_NAME if dividend["effective_for_signal"] else CORE_STRATEGY_NAME,
         "status": status,
         "as_of": as_of.isoformat(),
         "signal_date": signal_day.isoformat(),
         "planned_execution_date": execution_day.isoformat(),
         "execution_assumption": "下一交易日收盘；实际价格和能否成交未知",
         "target_vol": args.target_vol,
+        "target_vol_scope": "core_only; satellite overlay is not scaled to this budget",
         "max_risky_weight": args.max_risky_weight,
-        "max_risky_positions": config.max_risky_positions,
+        "core_max_risky_positions":config.max_risky_positions,
+        "max_risky_positions":config.max_risky_positions+1,
+        "max_total_etf_positions":config.max_risky_positions+2,
+        "combined_max_risky_weight":min(1.,args.max_risky_weight+state.dividend_policy.max_weight),
         "bear_scale": config.bear_scale,
         "short_momentum_days": config.short_momentum_days,
         "long_momentum_days": config.long_momentum_days,
@@ -137,8 +177,15 @@ def main() -> None:
         "max_single_risky_weight": config.max_single_risky_weight,
         "rank_buffer_size": config.rank_buffer_size,
         "mandatory_top_rank": config.mandatory_top_rank,
+        "ma_reversion_days": config.ma_reversion_days,
+        "ma_reversion_strength": config.ma_reversion_strength,
+        "score_formula": "(0.5*M20+0.5*M40)/max(vol60,0.05) + 0.5*D*clip(-ma_zscore20/3,-1,1)",
+        "score_details": score_details,
+        "satellite_details":dividend,
+        "core_target_weights":{s:round(float(w),6) for s,w in bundle.core_signals.loc[pd.Timestamp(signal_day)].items() if w>1e-8},
         "rotation_state": state.metadata(),
-        "universe": list(ETF_NAMES),
+        "universe":list(PORTFOLIO_ETF_NAMES),
+        "core_universe":list(ETF_NAMES),
         "target_weights": weights,
         "cash_weight": cash,
         "estimated_100_share_lot_cny_at_signal_close": lot_notional,
@@ -148,13 +195,26 @@ def main() -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"状态：{status}；信号日：{signal_day}；计划调仓日：{execution_day}；"
-          f"目标波动 {args.target_vol:.0%}；风险仓上限 {args.max_risky_weight:.0%}")
+          f"核心波动预算 {args.target_vol:.0%}；核心风险仓上限 {args.max_risky_weight:.0%}")
     print("选仓：合格池第1名必选；剩余名额优先保留前4名旧目标，再按评分补足")
+    print(f"评分：20/40日动量＋{config.ma_reversion_days}日均线反转，强度{config.ma_reversion_strength:g}")
+    dev=dividend["deviation_from_ma"]
+    dev_text=f"{dev:+.2%}" if dev is not None else "暂无完整均线"
+    print(f"红利卫星512890：MA200偏离{dev_text}；状态{dividend['state_reason']}；目标{dividend['target_weight']:.2%}；入0%、出+4%、不限日、上限30%")
+    print(f"卫星首次信号{dividend['effective_signal_date']}，首次计划执行{dividend['first_execution_date']}；先现金再国债。全账户风险预算可超过8%，最多5只ETF。")
+    if not dividend["effective_for_signal"]:
+        print("本次完整周信号早于卫星启用日，仍保留原核心计划；等待启用后的完整周信号。")
     if status == "ready":
         for code, weight in weights.items():
             amount = f"，目标约 {weight * args.capital:,.0f} 元" if args.capital else ""
-            print(f"  {code} {ETF_NAMES[code]}：{weight:.2%}{amount}")
+            print(f"  {code} {PORTFOLIO_ETF_NAMES[code]}：{weight:.2%}{amount}")
         print(f"  现金：{cash:.2%}")
+        if args.show_scores:
+            print("合格风险ETF评分：")
+            for row in score_details:
+                if row["eligible"]:
+                    print(f"  第{row['rank']}名 {row['symbol']}：动量{row['base_score']:.6f}，"
+                          f"均线修正{row['ma_adjustment']:+.6f}，最终{row['score']:.6f}")
         if args.capital:
             large_lots = {code: value for code, value in lot_notional.items()
                           if value / args.capital >= 0.02}
