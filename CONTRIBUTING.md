@@ -11,7 +11,7 @@
 
 从 `main` 创建描述清楚的分支，围绕一个研究问题或修复提交，通过Pull Request合并。策略或因子变化说明公式、数据截止日、成交时点、费用、对照组及样本选择限制；避免只汇报最优参数。
 
-通用因子放入 `etf_rotation/factors.py`，研究结果写入 `RESEARCH.md`。涉及默认策略时核对 `risk_strategy.py`、`config.py`、实盘和回测入口；排名缓冲依赖历史状态，修改 `rotation_state.json` 会改变未来选仓，需在PR中解释并核对截断及未来扰动检查。
+通用因子放入`etf_rotation/factors.py`，研究结果写入`RESEARCH.md`。涉及默认策略时核对`portfolio_strategy.py`、`risk_strategy.py`、`config.py`及两个入口；修改`rotation_state.json`需解释缓冲锚点、卫星启用日期及初始状态，并核对截断及未来扰动。7%旧研究冻结于`RiskConfig.buffered_momentum()`和`rotation_state_20261006.json`；红利研究的原8%核心冻结于`rotation_state_20261018.json`。默认重放与全历史假设必须明确区分，不能把研究虚拟持仓直接继承为实盘持仓。
 
 ## 共享范围
 

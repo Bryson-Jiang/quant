@@ -4,7 +4,7 @@ import unittest
 
 import pandas as pd
 
-from plot_benchmarks import BENCHMARKS, make_comparison
+from plot_benchmarks import BENCHMARKS, buy_hold_nav, incremental_attribution, make_comparison
 
 
 class BenchmarkPlotTests(unittest.TestCase):
@@ -27,6 +27,29 @@ class BenchmarkPlotTests(unittest.TestCase):
         self.prices["512100"] = self.prices["512100"].iloc[:2]
         with self.assertRaises(ValueError):
             make_comparison(self.equity, self.prices)
+
+    def test_technology_comparator_keeps_shares_and_initial_cost(self) -> None:
+        prices=pd.DataFrame({'a':[1.,2.,2.],'b':[1.,1.,2.]},index=self.equity.index[:3])
+        nav=buy_hold_nav(prices,{'a':.5,'b':.5})
+        self.assertAlmostEqual(nav.iloc[0],.9995)
+        self.assertAlmostEqual(nav.iloc[1],1.5*.9995)
+        self.assertAlmostEqual(nav.iloc[2],2.*.9995)
+
+    def test_incremental_attribution_equals_realized_wealth_difference(self) -> None:
+        import numpy as np
+        from etf_rotation.backtest import run_backtest
+        days=pd.bdate_range('2024-01-01',periods=8)
+        prices=pd.DataFrame({'510300':[100,102,106,95,110,115,116,111],
+                             '511260':[100,100.3,100.5,100.4,100.8,101,101.1,101.3],
+                             '512890':[100,110,90,120,135,110,130,125]},index=days)
+        base=pd.DataFrame([[.5,.5,0.],[.5,.5,0.]],index=days[[0,5]],columns=prices.columns)
+        added=base.copy();added.iloc[0]=[.5,.2,.3]
+        old=run_backtest(prices,base,days[0].date(),days[-1].date())
+        new=run_backtest(prices,added,days[0].date(),days[-1].date())
+        daily,accumulated=incremental_attribution(prices,new,old)
+        np.testing.assert_allclose(daily.sum(axis=1),new.equity.daily_return-old.equity.daily_return,atol=1e-12)
+        np.testing.assert_allclose(accumulated.net_nav_difference,new.equity.strategy_nav-old.equity.strategy_nav,atol=1e-12)
+        np.testing.assert_allclose(accumulated.drop(columns='net_nav_difference').sum(axis=1),accumulated.net_nav_difference,atol=1e-12)
 
 
 if __name__ == "__main__":

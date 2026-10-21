@@ -1,4 +1,4 @@
-"""当前实盘候选的 16 只 ETF 标的池。"""
+"""16只核心ETF及独立红利反转卫星；卫星不参与核心排名。"""
 
 from __future__ import annotations
 
@@ -25,5 +25,9 @@ ETF_NAMES: dict[str, str] = {
 
 BENCHMARK = "510300"
 PREVIOUS_STRATEGY_NAME = "weekly_16_etf_fast_40_20_single30"
-STRATEGY_NAME = "weekly_16_etf_fast_40_20_vol7_buffer4_top1_single30"
+BUFFERED_MOMENTUM_STRATEGY_NAME = "weekly_16_etf_fast_40_20_vol7_buffer4_top1_single30"
+CORE_STRATEGY_NAME = "weekly_16_etf_fast_40_20_vol8_ma20a05_buffer4_top1_single30"
+SATELLITE_ETF_NAMES = {"512890": "红利低波ETF（华泰柏瑞）"}
+PORTFOLIO_ETF_NAMES = {**ETF_NAMES, **SATELLITE_ETF_NAMES}
+STRATEGY_NAME = "weekly_core16_vol8_ma20a05_div512890_ma200_in0_out4_defense30"
 ADJUST = "hfq"  # Tushare 原始价 × 基金复权因子；不是可成交的真实价格。
