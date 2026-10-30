@@ -62,6 +62,35 @@ class PortfolioStrategyTests(unittest.TestCase):
         execution=self.core.index[self.core.index.get_loc(self.effective)+1]
         self.assertAlmostEqual(backtest.weights.at[execution,'512890'],.3)
 
+    def test_later_satellite_history_never_creates_prelisting_targets(self):
+        # 模拟ETF尚未上市，数据表只在核心历史的中间才开始。
+        later=self.history.iloc[180:]
+        for hypothetical in (False,True):
+            result=portfolio_signals(self.core,later,self.state,hypothetical_satellite_history=hypothetical)
+            before=result.satellite_states.index<later.index[0]
+            self.assertTrue(result.satellite_states.loc[before,'active'].eq(False).all())
+            self.assertTrue(result.signals.loc[result.signals.index<later.index[0],'512890'].eq(0).all())
+            pd.testing.assert_index_equal(result.signals.index,result.core_signals.index)
+
+    def test_empty_satellite_history_keeps_core_without_daily_phantom_signals(self):
+        for hypothetical in (False,True):
+            result=portfolio_signals(self.core,self.history.iloc[:0],self.state,hypothetical_satellite_history=hypothetical)
+            self.assertTrue(result.signals['512890'].eq(0).all())
+            self.assertTrue(result.satellite_states['active'].eq(False).all())
+            pd.testing.assert_frame_equal(result.signals[list(ETF_NAMES)],result.core_signals)
+
+    def test_loader_does_not_request_satellite_before_its_supported_history(self):
+        from etf_rotation.portfolio_strategy import load_portfolio_data
+        early=self.core.iloc[:5].copy()
+        early.index=pd.bdate_range('2018-01-02',periods=5)
+        with patch('etf_rotation.portfolio_strategy.load_close_prices',return_value=early), \
+                patch('etf_rotation.portfolio_strategy.load_symbol',return_value=early['510300']) as load:
+            _,h=load_portfolio_data(early.index[0].date(),early.index[-1].date(),Path('unused'),offline=True)
+        self.assertEqual(load.call_count,1)
+        self.assertEqual(load.call_args.args[0],'510300')
+        pd.testing.assert_index_equal(h.index,early.index)
+        self.assertTrue(h['512890'].isna().all())
+
     def test_future_prices_and_cutoff_do_not_change_old_portfolio(self):
         full=portfolio_signals(self.core,self.history,self.state)
         cutoff=weekly_signal_dates(self.core.index)[75]

@@ -12,6 +12,100 @@
 
 Token、行情缓存、因子数据库、个人账户明细及 `output/` 均保留在本机。账户数据不用于共享策略初始化。
 
+## 本地文件与输出速查
+
+先在PowerShell或PyCharm的Terminal切换到项目根目录，再使用本项目解释器。下列项目路径是示意，请替换为实际路径：
+
+```powershell
+cd C:\path\to\Quant
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+若已有 `.venv` 无需重建；若在新电脑尚未建立环境，先执行 `py -m venv .venv`。PyCharm的项目解释器选择本项目 `.venv\Scripts\python.exe`，运行配置的工作目录选项目根目录。直接指定解释器不需要激活PowerShell虚拟环境。
+
+### 经常使用的入口
+
+| 文件 | 何时运行 | 主要输出 |
+| --- | --- | --- |
+| `live_signal.py` | 每周盘后检查计划，日常也可查询状态 | 终端显示状态、信号日、执行日；有效时显示目标比例/金额及评分。完整计划保存在 `output/live_signal.json` |
+| `run_backtest.py` | 检查历史表现 | `output/backtest/` 下的 `equity.csv`、`daily_weights.csv`、`signal_weights.csv`、`trades.csv`、`summary.json`、`equity.png` |
+| `run_backtrader.py` | 用独立订单和现金引擎复核历史结果 | `output/backtrader_comparison_20261023/` 下的 `metrics.csv`、`reconciliation.csv`、逐日净值/实际权重/订单等；报告在 `docs/backtrader_comparison_20261023.md` |
+| `plot_benchmarks.py` | 已有回测结果后，与常见宽基比较 | 默认 `output/benchmark_comparison/` 下的 `broad_market_comparison.png`、`drawdown_comparison.png`、`comparison_summary.csv`、`comparison_nav.csv` |
+| `portfolio_tracker.py` | 录入券商真实持仓、入出金并统计真实收益 | 数据库 `data/live_portfolio.sqlite`；`report --export` 导出 `output/live_portfolio_history.csv`、`output/live_portfolio_positions.csv` |
+| `research_overfitting_audit.py` | 重新做2018年以来的参数和过拟合研究 | `output/overfitting_audit_20261021/` 数表与检查记录；报告在 `docs/overfitting_audit_20261021.md` |
+
+`research_reversal.py`、`research_vol8.py`、`research_dividend_reversion.py`、`research_strategy_optimization.py` 等是历史研究复现入口，有各自冻结的基线；平时不用逐个运行，也不会自动切换实盘默认。查看某入口支持的参数可在命令末尾加 `--help`。
+
+### 策略内部模块
+
+`etf_rotation/` 内主要文件由上述入口自动调用，通常不直接右键运行：
+
+- `config.py`：ETF代码、名称及策略版本；`risk_strategy.py`：核心评分、资格过滤、排名缓冲和风险仓配置。
+- `portfolio_strategy.py`、`mean_reversion.py`：叠加红利低波卫星及其入出场状态，组合成完整目标。
+- `factors.py`：十九种因子的定义；`factor_store.py`：计算结果缓存到 `data/factors.sqlite`，不是实盘账户数据库。
+- `data.py`：Tushare行情、同日复权因子、校验与增量缓存。
+- `backtest.py`：自写成交/费用/净值引擎；`backtrader_engine.py`：Backtrader对照；`report.py`：保存回测表格和图片。
+- `strategy_state.py`与`data/rotation_state.json`：重放缓冲锚点和红利启用状态。请保留并备份，真实持仓另行记录。
+
+### 推荐命令
+
+**日常获取计划**，示例总资产100000元，应改成券商当前持仓市值加现金：
+
+```powershell
+.\.venv\Scripts\python.exe live_signal.py --capital 100000 --show-scores
+```
+
+`--capital`只影响金额换算，不改变策略目标比例。不会自动读取券商持仓，也不会给出已扣除现有份额的买卖差额；需按本指南的份额公式另算。
+
+实盘入口按当前有效周信号日取行情，非调仓日不一定下载当天行情。`output/live_signal.json`会被本次计划覆盖，账户历史则另记在SQLite数据库中。
+
+**用现有缓存重现固定历史区间**，显式采用全历史红利假设：
+
+```powershell
+.\.venv\Scripts\python.exe run_backtest.py --offline --end 2026-10-20 --hypothetical-satellite
+.\.venv\Scripts\python.exe plot_benchmarks.py --offline
+```
+
+普通回测无参数时从2022年开始，默认终点为运行日，默认仅按红利实际启用日期叠加。上例通过 `--end` 固定区间、通过 `--hypothetical-satellite` 研究当前规则的历史表现。`plot_benchmarks.py`默认读取刚生成的 `output/backtest/`，首次缺少宽基行情时去掉绘图命令的 `--offline`；指定其他回测输出目录后，绘图也要传对应的 `--backtest-dir`。
+
+**按主要研究范围从2018年回测**，使用已准备的独立历史缓存：
+
+```powershell
+.\.venv\Scripts\python.exe run_backtest.py --start 2018-01-01 --end 2026-10-20 --cache-dir data/audit_history --offline --hypothetical-satellite --output-dir output/backtest_2018
+```
+
+2018年前的数据只用于指标/状态预热，不计入2018起始账户收益。该结果的净值和沪深300对比看 `output/backtest_2018/equity.png`。默认六宽基绘图包含不能覆盖2018全区间的科创50ETF，因此不能直接套用到2018起始回测；完整六宽基比较使用前面的2022起始示例。
+
+相同输出目录下重复回测会覆盖文件；保留多次结果时，用不同的 `--output-dir`。
+
+**Backtrader复核**：
+
+```powershell
+.\.venv\Scripts\python.exe run_backtrader.py --end 2026-10-20
+```
+
+它默认从2018年开始，使用 `data/audit_history/` 的共同缓存终点，**不会联网刷新行情**，也不会自动复用 `live_signal.py` 更新的 `data/cache/`。默认整段采用当前红利规则作历史假设；加 `--from-adoption` 才按实际启用日期回放。对照框架时应统一区间、缓存、费用与红利模式。
+
+**2018主区间参数复验**：
+
+```powershell
+.\.venv\Scripts\python.exe research_overfitting_audit.py --focus-2018 --end 2026-10-20
+```
+
+包含7个配置对照与125个参数点，耗时比日常信号更长；不需要每周重跑。现有 `data/audit_history/` 缺失时，可先用该脚本的 `--download-history --end 2026-10-20` 准备独立历史缓存。
+
+### PyCharm参数填写
+
+右键入口文件运行一次，再在其运行配置中填写参数。例如 `live_signal.py` 的脚本参数填写：
+
+```text
+--capital 100000 --show-scores
+```
+
+参数栏不再填写 `python`、解释器路径或脚本文件名。回测参数也用同样方式填写。终端看运行日志，项目文件树中打开 `output/` 看JSON、CSV和PNG；CSV可用Excel查看，Markdown研究报告在 `docs/`。
+
+以上带 `2026-10-20` 的命令用于复现固定历史结果，不是今天的实盘建议。实时计划使用 `live_signal.py`；`--offline`始终只读取已有缓存，不会自动补新数据。
+
 ## 每周运行
 
 每个交易周最后一个开市日收盘后生成信号，下一交易日接近收盘执行。节假日按交易日历调整，不能机械理解为固定每隔五个交易日交易。

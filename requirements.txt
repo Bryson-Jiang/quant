@@ -2,3 +2,4 @@ tushare>=1.4
 numpy>=1.24
 pandas>=2.0
 matplotlib>=3.7
+backtrader==1.9.78.123

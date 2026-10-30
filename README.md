@@ -6,7 +6,7 @@
 
 1. 将本文件夹作为项目打开，设置 Python 解释器并在项目终端执行 `python -m pip install -r requirements.txt`。
 2. 在 `data/tushare_token.txt` 放一行自己的 Tushare Token，或设置环境变量 `TUSHARE_TOKEN`。Token 文件已被 `.gitignore` 排除。
-3. 右键运行 `run_backtest.py` 查看历史结果；右键运行 `live_signal.py` 获取下一次调仓计划。两个入口的默认参数相同。
+3. 右键运行 `run_backtest.py` 查看历史结果；右键运行 `live_signal.py` 获取下一次调仓计划。两个入口共用生产策略函数，但日期和输出用途不同；本地文件作用、运行参数和输出速查见 [LIVE_GUIDE.md](LIVE_GUIDE.md#本地文件与输出速查)。
 
 新克隆的项目尚无行情缓存，第一次请联网运行 `python run_backtest.py --end 2026-09-30`，下载后再使用 `--offline`。每位成员使用自己的Tushare Token及数据权限。可将 `data/tushare_token.example.txt` 复制为 `data/tushare_token.txt` 后填写；也可在启动Python前设置环境变量 `TUSHARE_TOKEN`。程序不会自动读取 `.env`。
 
@@ -55,6 +55,7 @@ python -m unittest discover -s tests
 | `etf_rotation/strategy_state.py`、`data/rotation_state.json` | 保存切换锚点，从旧周目标重放排名缓冲 |
 | `etf_rotation/backtest.py` | 下一交易日成交、费用和缺价处理 |
 | `run_backtest.py` | PyCharm 回测入口 |
+| `run_backtrader.py`、`etf_rotation/backtrader_engine.py` | 原生Backtrader订单与现金记账的独立对照 |
 | `plot_benchmarks.py` | 将当前回测与六类宽基 ETF 买入持有收益画在同一张图 |
 | `live_signal.py` | 盘后调仓计划入口 |
 | `portfolio_tracker.py` | 录入实际持仓、入出金，查看真实账户收益 |
@@ -92,3 +93,13 @@ python -m unittest discover -s tests
 宽基收益图与最大回撤图位于 `output/benchmark_comparison/`，同时保存逐日净值、汇总表及数据检查记录。使用 `plot_benchmarks.py --offline` 可从缓存重画；不加 `--offline` 可为六只宽基 ETF 增量更新数据。图中的上证50、沪深300、中证500、中证1000、创业板和科创50均由代表 ETF 的后复权价格买入持有表示，**不是指数官方全收益序列**。512100 在 2022-09-02 缺少报价，图表仅在估值时沿用前一日价格，并在 `data_checks.json` 标记。
 
 复权收盘价用于研究连续收益，**不是可保证成交的价格**。模型未模拟 ETF 实盘价差、溢折价、整手数量、停牌时的真实成交和资金容量。历史低回撤不构成未来 5% 或 10% 的硬上限。
+
+## 过拟合与参数审计
+
+2026-10-21的[完整审计报告](docs/overfitting_audit_20261021.md)按用户指定以2018年至今为主要研究范围，包含7个配置对照、125个参数点复验及2018—2021/2022后稳定性检查；此前554个案例按原区间保留，其中2022后的选池、IC/R²、多重比较及执行诊断属于开发期证据。2018年前结果仅留作附录，历史行情可用于预热因子和状态。只复验主区间可运行 `python research_overfitting_audit.py --focus-2018 --end 2026-10-20`，完整入口为 `python research_overfitting_audit.py --end 2026-10-20`；独立历史缓存下载加 `--download-history`，已有结果重建报告加 `--report-only`。该审计没有修改默认策略。2018年以来夏普约1.32、最大回撤约10.11%，不能把近年夏普2和约5%回撤视为稳定实盘水平。
+
+## Backtrader独立复核
+
+2026-10-23的[Backtrader对照报告](docs/backtrader_comparison_20261023.md)比较2018年和2022年起的同一策略、同一行情与费用。运行 `python run_backtrader.py`，或在PyCharm直接运行该文件；先按 `requirements.txt` 安装依赖。默认只读 `data/audit_history` 缓存，共同行情截止2026-10-20；不自动调用Tushare。输出在 `output/backtrader_comparison_20261023/`。
+
+默认是全历史采用当前红利模块的假设研究，`--from-adoption`按实际启用日期回放，与 `run_backtest.py` 的默认启用模式对应。收盘目标比例场景保留原模型按成交参考价确定数量的理想假设，使用原生经纪商订单与现金记账；另列前日锁定份额的原生 `Close` 订单场景及资金不足拒单记录。没有用同日新信号同日成交。无成本逐日净值一致，单边5bps下年化差不到0.0002个百分点；这一复核检验实现，不构成过拟合已被排除或未来盈利的证明。
