@@ -29,8 +29,10 @@ def load_portfolio_data(start: date, end: date, cache_dir: Path, *,
                         offline: bool = False, refresh: bool = False) -> tuple[pd.DataFrame,pd.DataFrame]:
     """完整红利历史只用于长均线状态，不扩入核心排名；原16只加载口径不变。"""
     core=load_close_prices(min(start,date(2022,1,1)),end,cache_dir,offline=offline,refresh=refresh)
-    market=load_symbol(BENCHMARK,date(2019,1,1),end,cache_dir,offline=offline,refresh=refresh)
-    satellite=load_symbol("512890",date(2019,1,1),end,cache_dir,offline=offline,refresh=refresh)
+    market_start=min(date(2019,1,1),core.index[0].date())
+    market=load_symbol(BENCHMARK,market_start,end,cache_dir,offline=offline,refresh=refresh)
+    satellite=(load_symbol("512890",date(2019,1,1),end,cache_dir,offline=offline,refresh=refresh)
+               if end>=date(2019,1,1) else pd.Series(dtype=float))
     history=satellite.reindex(market.index).to_frame("512890")
     return core,history
 
@@ -50,11 +52,18 @@ def portfolio_signals(core_prices: pd.DataFrame, satellite_history: pd.DataFrame
     core=risk_controlled_signals(core_prices,config,store,**state.signal_kwargs(core_prices))
     # 不读取查询日以后的行情，连卫星状态的最后一个日期也与核心截止日一致。
     history=satellite_history.loc[:core_prices.index[-1],[policy.symbol]]
+    # 上市前没有报价也必须有明确的False状态；NaN的布尔值会误激活卫星。
+    history=history.reindex(history.index.union(core_prices.index)).sort_index()
     decisions=weekly_signal_dates(history.index)
     if not hypothetical_satellite_history:
         decisions=decisions[decisions>=pd.Timestamp(policy.effective_signal_date)]
     rule=ReversionRule(policy.ma_days,policy.entry_deviation,policy.exit_deviation,policy.max_holding_days)
-    satellite_state=reversion_states(history,policy.symbol,rule,decisions)
+    if history[policy.symbol].notna().any():
+        satellite_state=reversion_states(history,policy.symbol,rule,decisions)
+    else:
+        satellite_state=pd.DataFrame({"active":False,"reason":"flat","deviation":float("nan"),
+                                      "decision":history.index.isin(decisions)},index=history.index)
+        satellite_state.index.name="date"
     prices=core_prices.copy()
     prices[policy.symbol]=history[policy.symbol].reindex(prices.index)
     signals=defensive_funding_targets(prices,core,satellite_state.reindex(prices.index),
