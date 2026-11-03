@@ -1,4 +1,4 @@
-"""默认组合：原16只核心轮动＋独立红利反转卫星，共用实盘和回测路径。"""
+"""默认组合：17只核心轮动＋独立红利反转卫星，共用实盘和回测路径。"""
 
 from __future__ import annotations
 
@@ -40,16 +40,19 @@ def load_portfolio_data(start: date, end: date, cache_dir: Path, *,
 def portfolio_signals(core_prices: pd.DataFrame, satellite_history: pd.DataFrame,
                       state: RotationState, config: RiskConfig | None = None,
                       store: FactorStore | None = None, *,
-                      hypothetical_satellite_history: bool = False) -> PortfolioSignals:
+                      hypothetical_satellite_history: bool = False,
+                      hypothetical_universe_history: bool = False) -> PortfolioSignals:
     """默认按启用日期从未持有状态重放；全历史卫星模拟须显式请求。"""
     policy=state.dividend_policy
     if policy is None:
         raise ValueError("默认组合缺少红利卫星参数与启用日期")
-    if not set(ETF_NAMES).issubset(core_prices.columns):
-        raise ValueError("核心行情缺少默认16只ETF")
+    symbols=list(state.core_symbols or ETF_NAMES)
+    if not set(symbols).issubset(core_prices.columns):
+        raise ValueError(f"核心行情缺少策略所需{len(symbols)}只ETF")
     config=config or RiskConfig.current_default()
-    core_prices=core_prices.loc[:,list(ETF_NAMES)]
-    core=risk_controlled_signals(core_prices,config,store,**state.signal_kwargs(core_prices))
+    core_prices=core_prices.loc[:,symbols]
+    core=risk_controlled_signals(core_prices,config,store,**state.signal_kwargs(core_prices),
+                                universe_activation_dates=state.universe_activation_dates(hypothetical=hypothetical_universe_history))
     # 不读取查询日以后的行情，连卫星状态的最后一个日期也与核心截止日一致。
     history=satellite_history.loc[:core_prices.index[-1],[policy.symbol]]
     # 上市前没有报价也必须有明确的False状态；NaN的布尔值会误激活卫星。

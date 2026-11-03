@@ -13,8 +13,10 @@ from etf_rotation.strategy_state import RotationState, SelectionAnchor
 
 class CurrentStrategyTests(unittest.TestCase):
     def test_bank_etf_is_in_default_universe(self) -> None:
-        self.assertEqual(len(ETF_NAMES), 16)
+        self.assertEqual(len(ETF_NAMES), 17)
         self.assertEqual(ETF_NAMES["512800"], "银行ETF（华宝）")
+        self.assertIn('513180',ETF_NAMES)
+        self.assertNotIn('513500',ETF_NAMES)
 
     def test_selected_default_is_eight_percent_ma20_buffer_mandatory_first(self) -> None:
         config = RiskConfig.current_default()

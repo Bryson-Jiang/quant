@@ -1,6 +1,7 @@
 """只使用信号日及之前价格的 ETF 因子库。
 
-所有窗口均以交易日计数；输入必须是未填补缺价的后复权收盘价。
+所有窗口均以交易日计数；收盘因子输入为未填补缺价的后复权收盘价。
+RSRS另用同日复权最高/最低价，不能从收盘价伪造。
 """
 
 from __future__ import annotations
@@ -142,3 +143,53 @@ def compute_factor(prices: pd.DataFrame, spec: FactorSpec) -> pd.DataFrame:
             vol = returns.rolling(spec.window, min_periods=spec.window).std(ddof=1) * np.sqrt(252)
             out = momentum / vol.clip(lower=0.05)
     return out.where(prices.notna()).replace([np.inf, -np.inf], np.nan)
+
+
+@dataclass(frozen=True)
+class RSRSSpec:
+    """N日OLS斜率，最近M个斜率（含当日）的总体标准差Z分数。"""
+
+    regression_days: int = 18
+    standardization_days: int = 600
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.regression_days, int) or self.regression_days < 3
+                or not isinstance(self.standardization_days, int) or self.standardization_days < 2):
+            raise ValueError("RSRS回归窗口至少3日，标准化窗口至少2日")
+
+
+def validate_high_low(high: pd.DataFrame, low: pd.DataFrame) -> None:
+    validate_prices(high)
+    validate_prices(low)
+    if not high.index.equals(low.index) or not high.columns.equals(low.columns):
+        raise ValueError("RSRS最高/最低价必须严格对齐")
+    if high.notna().ne(low.notna()).any().any() or (high < low).any().any():
+        raise ValueError("RSRS高低价必须成对存在，且最高价不能低于最低价")
+
+
+def compute_rsrs(high: pd.DataFrame, low: pd.DataFrame,
+                 spec: RSRSSpec = RSRSSpec()) -> dict[str, pd.DataFrame]:
+    """H=alpha+beta*L+epsilon；全部滚动窗口只读当日及以前完整报价。
+
+    zscore=(beta-mean_M(beta))/std_M(beta, ddof=0)
+    adjusted=zscore*R²；right_skew=zscore*R²*beta。
+    这是价格回归的拟合R²，不是预测未来收益的R²。常量、缺价或未预热
+    窗口保留NaN；不前填、不用收盘价充当高低价、不用全样本标准化。
+    """
+    validate_high_low(high, low)
+    n, m = spec.regression_days, spec.standardization_days
+    x = low.rolling(n, min_periods=n)
+    y = high.rolling(n, min_periods=n)
+    vx, vy = x.var(ddof=0), y.var(ddof=0)
+    covariance = x.cov(high, ddof=0)
+    stable_x = vx > 1e-12 * x.mean().pow(2)
+    stable_y = vy > 1e-12 * y.mean().pow(2)
+    slope = covariance / vx.where(stable_x)
+    fit = (covariance.pow(2) / (vx * vy).where(stable_x & stable_y)).clip(0, 1)
+    history = slope.rolling(m, min_periods=m)
+    sigma = history.std(ddof=0)
+    z = (slope - history.mean()) / sigma.where(sigma > 1e-10)
+    values = {"slope": slope, "r_squared": fit, "zscore": z,
+              "adjusted": z * fit, "right_skew": z * fit * slope}
+    return {name: frame.where(high.notna()).replace([np.inf, -np.inf], np.nan)
+            for name, frame in values.items()}

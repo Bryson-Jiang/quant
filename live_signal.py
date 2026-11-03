@@ -14,7 +14,7 @@ from etf_rotation.config import CORE_STRATEGY_NAME, ETF_NAMES, PORTFOLIO_ETF_NAM
 from etf_rotation.data import _client
 from etf_rotation.factor_store import FactorStore
 from etf_rotation.factors import FactorSpec, compute_factor
-from etf_rotation.risk_strategy import BOND, RiskConfig, risk_controlled_signals, risk_score_components
+from etf_rotation.risk_strategy import BOND, RiskConfig, risk_controlled_signals, risk_score_components, universe_activation_mask
 from etf_rotation.portfolio_strategy import load_portfolio_data, portfolio_signals, satellite_details
 from etf_rotation.strategy_state import load_rotation_state
 
@@ -77,13 +77,16 @@ def latest_actionable_week(calendar: pd.DataFrame, as_of: date,
 
 
 def signal_score_details(prices: pd.DataFrame, config: RiskConfig, target: pd.Series,
-                         store: FactorStore | None = None) -> list[dict]:
+                         store: FactorStore | None = None, *, universe_activation_dates: dict | None = None) -> list[dict]:
     """与正式选仓共用评分函数，解释信号日每只风险ETF的资格及排名。"""
     def factor(spec):
         return store.get(prices, spec) if store is not None else compute_factor(prices, spec)
 
     short = factor(FactorSpec("momentum", config.short_momentum_days, config.momentum_skip_days))
     long = factor(FactorSpec("momentum", config.long_momentum_days, config.momentum_skip_days))
+    if universe_activation_dates:
+        active=universe_activation_mask(prices,universe_activation_dates)
+        short=short.where(active);long=long.where(active)
     trend = factor(FactorSpec("trend", config.trend_days))
     vol = factor(FactorSpec("volatility", 60))
     z = factor(FactorSpec("ma_zscore", config.ma_reversion_days)) if config.ma_reversion_strength else None
@@ -142,7 +145,8 @@ def main() -> None:
     state = load_rotation_state(args.state_file)
     bundle=portfolio_signals(core_prices,satellite_history,state,config,store)
     target=bundle.signals.loc[pd.Timestamp(signal_day)]
-    score_details=signal_score_details(core_prices,config,bundle.core_signals.loc[pd.Timestamp(signal_day)],store)
+    score_details=signal_score_details(core_prices,config,bundle.core_signals.loc[pd.Timestamp(signal_day)],store,
+                                      universe_activation_dates=state.universe_activation_dates())
     dividend=satellite_details(bundle,state,pd.Timestamp(signal_day))
     weights = {symbol: round(float(value), 6) for symbol, value in target.items() if value > 1e-8}
     cash = round(max(0.0, 1.0 - float(target.sum())), 6)
@@ -156,7 +160,9 @@ def main() -> None:
         lot_notional[symbol] = round(float(quote.iloc[0]) * 100, 2)
     plan = {
         "strategy": STRATEGY_NAME,
-        "applied_strategy": STRATEGY_NAME if dividend["effective_for_signal"] else CORE_STRATEGY_NAME,
+        "applied_strategy": (state.universe_policy.previous_strategy if state.universe_policy is not None
+                              and signal_day<state.universe_policy.effective_signal_date else
+                              STRATEGY_NAME if dividend["effective_for_signal"] else CORE_STRATEGY_NAME),
         "status": status,
         "as_of": as_of.isoformat(),
         "signal_date": signal_day.isoformat(),
@@ -186,6 +192,8 @@ def main() -> None:
         "rotation_state": state.metadata(),
         "universe":list(PORTFOLIO_ETF_NAMES),
         "core_universe":list(ETF_NAMES),
+        "active_core_universe":[s for s in ETF_NAMES if s not in state.universe_activation_dates()
+                                or signal_day>=state.universe_activation_dates()[s]],
         "target_weights": weights,
         "cash_weight": cash,
         "estimated_100_share_lot_cny_at_signal_close": lot_notional,
@@ -198,6 +206,9 @@ def main() -> None:
           f"核心波动预算 {args.target_vol:.0%}；核心风险仓上限 {args.max_risky_weight:.0%}")
     print("选仓：合格池第1名必选；剩余名额优先保留前4名旧目标，再按评分补足")
     print(f"评分：20/40日动量＋{config.ma_reversion_days}日均线反转，强度{config.ma_reversion_strength:g}")
+    if state.universe_policy is not None:
+        up=state.universe_policy
+        print(f"新增标的{'、'.join(up.added_symbols)}：首次纳入信号{up.effective_signal_date}，首次计划执行{up.first_execution_date}；此前计划沿用原16只核心。")
     dev=dividend["deviation_from_ma"]
     dev_text=f"{dev:+.2%}" if dev is not None else "暂无完整均线"
     print(f"红利卫星512890：MA200偏离{dev_text}；状态{dividend['state_reason']}；目标{dividend['target_weight']:.2%}；入0%、出+4%、不限日、上限30%")

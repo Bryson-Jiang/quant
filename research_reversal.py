@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from etf_rotation.backtest import run_backtest
-from etf_rotation.config import ETF_NAMES, BUFFERED_MOMENTUM_STRATEGY_NAME as STRATEGY_NAME
+from etf_rotation.config import LEGACY_CORE_NAMES as ETF_NAMES, BUFFERED_MOMENTUM_STRATEGY_NAME as STRATEGY_NAME
 from etf_rotation.data import load_close_prices
 from etf_rotation.factors import FactorSpec, compute_factor
 from etf_rotation.risk_strategy import BOND, RiskConfig, risk_controlled_signals, weekly_signal_dates

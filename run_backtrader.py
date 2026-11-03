@@ -2,7 +2,7 @@
 
 python run_backtrader.py
 python run_backtrader.py --start 2022-01-01 --end 2026-10-20
-默认假设整段历史采用当前规则；--from-adoption才按实际红利启用日期回放。
+默认假设整段历史采用当前核心池及红利规则；--from-adoption按两者实际启用日期回放。
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from etf_rotation.portfolio_strategy import portfolio_signals
 from etf_rotation.strategy_state import load_rotation_state
 
 ROOT=Path(__file__).resolve().parent
-DEFAULT_OUT=ROOT/"output/backtrader_comparison_20261023"
+DEFAULT_OUT=ROOT/"output/backtrader_comparison_current"
 
 
 def protected():
@@ -58,10 +58,11 @@ def compare(args):
     core,history,end=load_offline(args.cache_dir,args.end)
     if core.index[0].date()>args.start:raise ValueError("缓存起点晚于回测起点，请使用data/audit_history完整缓存")
     state=load_rotation_state(ROOT/"data/rotation_state.json")
-    bundle=portfolio_signals(core,history,state,hypothetical_satellite_history=not args.from_adoption)
+    bundle=portfolio_signals(core,history,state,hypothetical_satellite_history=not args.from_adoption,
+                             hypothetical_universe_history=not args.from_adoption)
     prices,signals=bundle.prices,bundle.signals
     mode="from_actual_adoption_date" if args.from_adoption else "hypothetical_full_history"
-    json_file(args.output_dir/"manifest.json",{"research_date":"2026-10-23","end":str(end),"requested_start":str(args.start),
+    json_file(args.output_dir/"manifest.json",{"research_date":date.today().isoformat(),"end":str(end),"requested_start":str(args.start),
        "strategy":STRATEGY_NAME,"simulation_mode":mode,"cost_bps":args.fee_bps+args.slippage_bps,
        "initial_cash_for_normalized_research":args.initial_cash,"protected_before":before,
        "price_hash":hashlib.sha256(pd.util.hash_pandas_object(prices,index=True).values.tobytes()).hexdigest(),
@@ -139,7 +140,7 @@ def render_report(args,end,table,reconciliation,results,mode):
     fig.suptitle(f"Backtrader独立经纪商复核｜行情至{end}｜单边{args.fee_bps+args.slippage_bps:g}bps",fontsize=15)
     fig.tight_layout()
     assets=ROOT/"docs/assets";assets.mkdir(exist_ok=True,parents=True)
-    fig.savefig(assets/"backtrader_comparison_20261023.png",dpi=150);plt.close(fig)
+    fig.savefig(assets/"backtrader_comparison_current.png",dpi=150);plt.close(fig)
     lines=[]
     labels={"original":"原自写引擎","backtrader_target_close":"Backtrader：收盘目标比例","backtrader_fixed_close":"Backtrader：前日锁定份额"}
     for _,r in table.iterrows():
@@ -150,7 +151,7 @@ def render_report(args,end,table,reconciliation,results,mode):
         descriptions.append(f"- {start}起：锁定份额模式完成{lm['orders_completed']}笔ETF订单，资金不足/拒单{lm['orders_margin_or_rejected']}笔。没有隐藏失败或自动补单。")
     report=f"""# Backtrader独立回测对照
 
-研究日期2026-10-23；行情截止{end}。主研究从2018年开始，2022年起另作同区间复核。没有重新调参，没有改变默认策略。
+研究日期{date.today().isoformat()}；行情截止{end}。当前{len(ETF_NAMES)}只核心池的复核；2026-10-23的旧16只报告单独保留。没有重新调参。
 
 ## 1. 原来使用什么引擎
 
@@ -193,7 +194,7 @@ Backtrader官方说明：[次日Close订单](https://www.backtrader.com/docu/ord
 | --- | --- | --- | --- | --- | --- |
 {chr(10).join(lines)}
 
-![净值、回撤及引擎差异](assets/backtrader_comparison_20261023.png)
+![净值、回撤及引擎差异](assets/backtrader_comparison_current.png)
 
 ## 5. 差异与检查
 
@@ -203,7 +204,7 @@ Backtrader官方说明：[次日Close订单](https://www.backtrader.com/docu/ord
 
 Backtrader原生TimeReturn与输出逐日收益核对，原生DrawDown与统一统计核对。完整订单、失败原因、现金、净值、实际持仓和对账误差保存于本地输出目录；已有生产文件、实盘状态及live_signal输出指纹保持一致。
 
-新增8项Backtrader测试覆盖：无成本逐日对账、实际现金扣费、跨起点订单、最后交易日成交、缺价取消、上市前禁止买入、长期缺价停止、前日固定份额与未来价格扰动。完整101项测试通过；系统临时目录测试使用沙盒外权限完成。
+8项Backtrader测试覆盖：无成本逐日对账、实际现金扣费、跨起点订单、最后交易日成交、缺价取消、上市前禁止买入、长期缺价停止、前日固定份额与未来价格扰动。完整项目测试结果见当轮策略研究报告；系统临时目录测试使用沙盒外权限完成。
 
 锁定份额模式中的拒单会改变风险暴露，因此较高夏普不能直接归为因子改善。实际执行应根据临近成交时的资产和现金核算可买份额并预留费用；上述固定份额场景保留拒单且不补单，不能直接当作完善的实盘执行系统。
 
@@ -220,9 +221,9 @@ Backtrader原生TimeReturn与输出逐日收益核对，原生DrawDown与统一�
 .\\.venv\\Scripts\\python.exe run_backtrader.py --from-adoption
 ```
 
-可以在PyCharm直接运行 `run_backtrader.py`。默认只读 `data/audit_history` 本地缓存；若该目录未准备好，可先运行既有审计的数据下载入口。输出在 `output/backtrader_comparison_20261023/`，原自写回测仍由 `run_backtest.py` 运行。
+可以在PyCharm直接运行 `run_backtrader.py`。默认只读 `data/audit_history` 本地缓存；需覆盖当前{len(ETF_NAMES)}只核心及红利。输出在 `output/backtrader_comparison_current/`，原自写回测仍由 `run_backtest.py` 运行。默认全历史假设同时作用于扩池和红利；`--from-adoption`按二者实际启用日回放。
 """
-    (ROOT/"docs/backtrader_comparison_20261023.md").write_text(report,encoding="utf-8")
+    (ROOT/"docs/backtrader_comparison_current.md").write_text(report,encoding="utf-8")
     print("\n"+table[table.cost_bps.eq(args.fee_bps+args.slippage_bps)][["start","engine","annual_return","sharpe_zero_rf","max_drawdown"]].to_string(index=False))
 
 

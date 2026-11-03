@@ -29,6 +29,8 @@ def parse_args() -> argparse.Namespace:
                         help="核心风险ETF总仓位上限70%%；另有最多30%%红利卫星")
     parser.add_argument("--hypothetical-satellite",action="store_true",
                         help="显式模拟2022年以来均已采用红利卫星的假设历史；默认从实际启用日开始")
+    parser.add_argument("--hypothetical-universe",action="store_true",
+                        help="假设当前核心池全历史可用；默认仅从扩池实际生效日加入恒生科技")
     parser.add_argument("--fee-bps", type=float, default=3.0, help="单边手续费，基点")
     parser.add_argument("--slippage-bps", type=float, default=2.0, help="单边滑点，基点")
     parser.add_argument("--cache-dir", type=Path, default=PROJECT_DIR / "data" / "cache")
@@ -55,11 +57,13 @@ def main() -> None:
                                              max_risky_weight=args.max_risky_weight)
     state = load_rotation_state(args.state_file)
     bundle=portfolio_signals(core_prices,satellite_history,state,risk_config,store,
-                             hypothetical_satellite_history=args.hypothetical_satellite)
+                             hypothetical_satellite_history=args.hypothetical_satellite,
+                             hypothetical_universe_history=args.hypothetical_universe)
     signals=bundle.signals;prices=bundle.prices
     mode="hypothetical_full_history" if args.hypothetical_satellite else "from_actual_adoption_date"
     print(f"核心参数：{risk_config}")
     print(f"红利卫星：{state.dividend_policy.metadata()}；回测模式：{mode}")
+    print(f"标的池模式：{'hypothetical_full_history' if args.hypothetical_universe else 'from_actual_adoption_date'}")
     print("提示：默认仅从卫星实际启用日期叠加；--hypothetical-satellite为全历史假设测试，均不是账户实盘收益。")
     result = run_backtest(prices, signals, args.start, args.end,
                           fee_bps=args.fee_bps, slippage_bps=args.slippage_bps)
@@ -70,6 +74,7 @@ def main() -> None:
                               "config": asdict(risk_config),
                               "config_scope":"core_only",
                               "simulation_mode":mode,
+                              "universe_simulation_mode":"hypothetical_full_history" if args.hypothetical_universe else "from_actual_adoption_date",
                               "dividend_policy":state.dividend_policy.metadata(),
                               "rotation_state": state.metadata(),
                               "universe":list(PORTFOLIO_ETF_NAMES),

@@ -9,7 +9,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from .config import BUFFERED_MOMENTUM_STRATEGY_NAME, CORE_STRATEGY_NAME, ETF_NAMES, SATELLITE_ETF_NAMES, STRATEGY_NAME
+from .config import (BUFFERED_MOMENTUM_STRATEGY_NAME, CORE_STRATEGY_NAME, ETF_NAMES,
+                     LEGACY_CORE_NAMES, LEGACY_CORE_STRATEGY_NAME, LEGACY_PORTFOLIO_STRATEGY_NAME,
+                     SATELLITE_ETF_NAMES, STRATEGY_NAME)
 from .risk_strategy import BOND
 
 
@@ -40,9 +42,29 @@ class DividendPolicy:
 
 
 @dataclass(frozen=True)
+class UniversePolicy:
+    added_symbols: tuple[str, ...]
+    adopted_on: date
+    effective_signal_date: date
+    first_execution_date: date
+    previous_strategy: str
+
+    def metadata(self):
+        return {"added_symbols":list(self.added_symbols),"adopted_on":self.adopted_on.isoformat(),
+                "effective_signal_date":self.effective_signal_date.isoformat(),
+                "first_execution_date":self.first_execution_date.isoformat(),"previous_strategy":self.previous_strategy}
+
+
+@dataclass(frozen=True)
 class RotationState(SelectionAnchor):
     historical_anchors: tuple[SelectionAnchor, ...] = ()
     dividend_policy: DividendPolicy | None = None
+    universe_policy: UniversePolicy | None = None
+    core_symbols: tuple[str, ...] | None = None
+
+    def universe_activation_dates(self, *, hypothetical: bool = False) -> dict:
+        if hypothetical or self.universe_policy is None:return {}
+        return {s:self.universe_policy.effective_signal_date for s in self.universe_policy.added_symbols}
 
     def signal_kwargs(self, prices: pd.DataFrame) -> dict:
         """锚点之后必须保有锚点行情；历史切片不读取未来的切换状态。"""
@@ -73,13 +95,15 @@ class RotationState(SelectionAnchor):
                  "initial_risky_selection": list(a.initial_risky_selection)} for a in self.historical_anchors]
         if self.dividend_policy is not None:
             result["dividend_policy"]=self.dividend_policy.metadata()
+        if self.universe_policy is not None:
+            result["universe_policy"]=self.universe_policy.metadata()
         return result
 
 
 def load_rotation_state(path: Path, *, expected_strategy: str = STRATEGY_NAME) -> RotationState:
     """缺失或错误时停止发布，避免丢失缓冲历史后静默改变实盘计划。"""
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("schema_version") not in {1, 2, 3} or payload.get("strategy") != expected_strategy:
+    if payload.get("schema_version") not in {1, 2, 3, 4} or payload.get("strategy") != expected_strategy:
         raise ValueError("策略切换记录的版本或策略名称不匹配")
 
     def parse_anchor(item):
@@ -98,8 +122,9 @@ def load_rotation_state(path: Path, *, expected_strategy: str = STRATEGY_NAME) -
     if any(a.effective_signal_date > b.selection_anchor_date for a, b in zip(sequence, sequence[1:])):
         raise ValueError("策略切换锚点必须按时间排序且不能重叠")
     policy=None
-    if payload.get("schema_version")==3:
-        if expected_strategy!=STRATEGY_NAME or payload.get("core_strategy")!=CORE_STRATEGY_NAME:
+    if payload.get("schema_version") in {3,4}:
+        pairs={STRATEGY_NAME:CORE_STRATEGY_NAME,LEGACY_PORTFOLIO_STRATEGY_NAME:LEGACY_CORE_STRATEGY_NAME}
+        if expected_strategy not in pairs or payload.get("core_strategy")!=pairs[expected_strategy]:
             raise ValueError("红利卫星的核心策略版本不匹配")
         item=payload["dividend_policy"]
         policy=DividendPolicy(**{**item,**{k:date.fromisoformat(item[k]) for k in
@@ -113,8 +138,21 @@ def load_rotation_state(path: Path, *, expected_strategy: str = STRATEGY_NAME) -
             raise ValueError("红利卫星参数或启用日期无效")
     elif expected_strategy==STRATEGY_NAME:
         raise ValueError("当前默认必须保有红利卫星启用记录")
+    universe=None
+    if payload.get("schema_version")==4:
+        item=payload['universe_policy']
+        universe=UniversePolicy(tuple(item['added_symbols']),*(date.fromisoformat(item[k]) for k in
+                                ('adopted_on','effective_signal_date','first_execution_date')),item['previous_strategy'])
+        added_symbols=set(ETF_NAMES)-set(LEGACY_CORE_NAMES)
+        if (expected_strategy!=STRATEGY_NAME or set(universe.added_symbols)!=added_symbols
+                or len(universe.added_symbols)!=len(added_symbols) or universe.previous_strategy!=LEGACY_PORTFOLIO_STRATEGY_NAME
+                or not universe.adopted_on<=universe.effective_signal_date<universe.first_execution_date):
+            raise ValueError('扩池启用记录无效')
+    elif expected_strategy==STRATEGY_NAME:
+        raise ValueError('当前默认必须保存扩池启用记录')
+    symbols=tuple(ETF_NAMES) if expected_strategy==STRATEGY_NAME else tuple(LEGACY_CORE_NAMES)
     return RotationState(latest.selection_anchor_date, latest.effective_signal_date,
-                         latest.initial_risky_selection, history,policy)
+                         latest.initial_risky_selection, history,policy,universe,symbols)
 
 
 def load_research_rotation_state(root: Path) -> RotationState:

@@ -48,7 +48,7 @@ class LiveScheduleTests(unittest.TestCase):
         from etf_rotation.risk_strategy import RiskConfig, risk_controlled_signals
         rng = np.random.default_rng(27)
         days = pd.bdate_range("2024-01-01", periods=180)
-        prices = pd.DataFrame(np.exp(np.cumsum(rng.normal(0.001, 0.009, (180, 16)), axis=0)),
+        prices = pd.DataFrame(np.exp(np.cumsum(rng.normal(0.001, 0.009, (180, len(ETF_NAMES))), axis=0)),
                               index=days, columns=ETF_NAMES)
         config = RiskConfig.current_default()
         target = risk_controlled_signals(prices, config).iloc[-1]
