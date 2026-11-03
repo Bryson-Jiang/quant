@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from etf_rotation.backtest import BacktestResult, run_backtest
-from etf_rotation.config import ETF_NAMES
+from etf_rotation.config import LEGACY_CORE_NAMES as ETF_NAMES
 from etf_rotation.data import load_close_prices
 from etf_rotation.factor_store import FactorStore
 from etf_rotation.factors import FactorSpec

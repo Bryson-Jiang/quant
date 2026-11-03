@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from etf_rotation.backtest import BacktestResult, run_backtest
-from etf_rotation.config import ETF_NAMES, PREVIOUS_STRATEGY_NAME as STRATEGY_NAME
+from etf_rotation.config import LEGACY_CORE_NAMES as ETF_NAMES, PREVIOUS_STRATEGY_NAME as STRATEGY_NAME
 from etf_rotation.data import load_symbol
 from etf_rotation.factors import FactorSpec, compute_factor
 from etf_rotation.risk_strategy import (BOND, RiskConfig, priority_buffer_selection,

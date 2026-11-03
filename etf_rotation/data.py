@@ -208,6 +208,7 @@ def load_close_prices(
     offline: bool = False,
     refresh: bool = False,
     warmup_days: int = 400,
+    symbols: tuple[str, ...] | None = None,
 ) -> pd.DataFrame:
     """以沪深300 ETF 的交易日为主日历，其他 ETF 上市前保持空值。"""
     if start >= end:
@@ -216,7 +217,7 @@ def load_close_prices(
     series = {
         symbol: load_symbol(symbol, fetch_start, end, cache_dir,
                             offline=offline, refresh=refresh)
-        for symbol in ETF_NAMES
+        for symbol in (symbols or tuple(ETF_NAMES))
     }
     calendar = series[BENCHMARK].index
     if calendar.empty:

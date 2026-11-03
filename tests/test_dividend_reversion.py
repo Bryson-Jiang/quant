@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from etf_rotation.config import ETF_NAMES
+from etf_rotation.config import LEGACY_CORE_NAMES as ETF_NAMES
 from etf_rotation.factors import FactorSpec, compute_factor
 from etf_rotation.mean_reversion import ReversionRule, defensive_funding_targets, reversion_states
 from etf_rotation.risk_strategy import RiskConfig, risk_controlled_signals, risk_score_components, weekly_signal_dates

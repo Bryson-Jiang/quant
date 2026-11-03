@@ -68,9 +68,9 @@ def dividend_comparison(end, cache_dir, output_dir, offline):
     """新默认全历史假设、科技重仓示例与红利边际归因；不修改实盘。"""
     import numpy as np
     from etf_rotation.backtest import run_backtest
-    from etf_rotation.config import ETF_NAMES
-    from etf_rotation.portfolio_strategy import load_portfolio_data, portfolio_signals
-    from etf_rotation.strategy_state import load_rotation_state
+    from etf_rotation.config import LEGACY_CORE_NAMES as ETF_NAMES, LEGACY_PORTFOLIO_STRATEGY_NAME as STRATEGY_NAME
+    from etf_rotation.portfolio_strategy import portfolio_signals
+    from etf_rotation.legacy_research import load_portfolio_data, load_rotation_state
     protected_names=('data/rotation_state.json','output/live_signal.json','etf_rotation/config.py','live_signal.py','run_backtest.py')
     def fingerprints():return {s:hashlib.sha256((ROOT/s).read_bytes()).hexdigest() for s in protected_names if (ROOT/s).exists()}
     before=fingerprints()

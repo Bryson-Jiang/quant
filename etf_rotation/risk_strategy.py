@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -94,7 +95,7 @@ class RiskConfig:
 def risk_score_components(short_momentum: pd.DataFrame, long_momentum: pd.DataFrame,
                           volatility: pd.DataFrame, config: RiskConfig,
                           ma_zscore: pd.DataFrame | None = None) -> dict[str, pd.DataFrame]:
-    """生产与评分解释共用：当日15只风险ETF原评分离散程度缩放有界反转分。"""
+    """生产与评分解释共用：当日已启用风险ETF原评分离散程度缩放有界反转分。"""
     base = (0.50 * short_momentum + 0.50 * long_momentum) / volatility.clip(lower=0.05)
     adjustment = pd.DataFrame(0.0, index=base.index, columns=base.columns)
     if config.ma_reversion_strength:
@@ -126,13 +127,28 @@ def weekly_signal_dates(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
     return index[~period.duplicated(keep="last")]
 
 
+def universe_activation_mask(prices: pd.DataFrame, activation_dates: dict[str, date | pd.Timestamp] | None = None) -> pd.DataFrame:
+    """保留指标预热价格，仅在启用日前屏蔽评分/资格及截面缩放贡献。"""
+    mask = pd.DataFrame(True, index=prices.index, columns=prices.columns)
+    for symbol, activation in (activation_dates or {}).items():
+        if symbol not in prices or symbol == BOND:
+            raise ValueError("标的启用日期包含未知ETF或防守国债")
+        day = pd.Timestamp(activation)
+        if pd.isna(day) or day.tzinfo is not None:
+            raise ValueError("标的启用日期无效")
+        mask[symbol] = prices.index >= day
+    return mask
+
+
 def risk_controlled_signals(prices: pd.DataFrame, config: RiskConfig,
                             store: FactorStore | None = None,
                             factor_frames: dict[FactorSpec, pd.DataFrame] | None = None,
                             *, score_overlay: pd.DataFrame | None = None,
                             initial_risky_selection: list[str] | None = None,
                             initial_selection_date: pd.Timestamp | None = None,
-                            selection_resets: list[tuple[pd.Timestamp, list[str]]] | None = None) -> pd.DataFrame:
+                            selection_resets: list[tuple[pd.Timestamp, list[str]]] | None = None,
+                            universe_activation_dates: dict | None = None,
+                            eligibility_mask: pd.DataFrame | None = None) -> pd.DataFrame:
     """周目标最多三只风险ETF加国债。旧选仓只参与排名筛选，不覆盖绝对资格。
 
     切换时可指定截至某历史信号日的旧目标；仅在该日之后第一次信号前初始化。
@@ -141,6 +157,9 @@ def risk_controlled_signals(prices: pd.DataFrame, config: RiskConfig,
     validate_prices(prices)
     if BOND not in prices:
         raise ValueError(f"价格矩阵缺少防守资产 {BOND}")
+    if eligibility_mask is not None and (not eligibility_mask.index.equals(prices.index)
+            or not eligibility_mask.columns.equals(prices.columns)):
+        raise ValueError('资格掩码必须与价格矩阵严格对齐')
 
     def factor(spec: FactorSpec) -> pd.DataFrame:
         if factor_frames is not None and spec in factor_frames:
@@ -151,6 +170,10 @@ def risk_controlled_signals(prices: pd.DataFrame, config: RiskConfig,
                               config.momentum_skip_days))
     mom120 = factor(FactorSpec("momentum", config.long_momentum_days,
                                config.momentum_skip_days))
+    if universe_activation_dates:
+        active = universe_activation_mask(prices, universe_activation_dates)
+        mom60 = mom60.where(active)
+        mom120 = mom120.where(active)
     trend120 = factor(FactorSpec("trend", config.trend_days))
     vol60 = factor(FactorSpec("volatility", 60))
     bond_mom60 = factor(FactorSpec("momentum", 60))
@@ -196,6 +219,8 @@ def risk_controlled_signals(prices: pd.DataFrame, config: RiskConfig,
         row = pd.Series(0.0, index=prices.columns, name=day)
         eligible = (mom120.loc[day, risk_columns] > 0) & (
             trend120.loc[day, risk_columns] > 0)
+        if eligibility_mask is not None:
+            eligible &= eligibility_mask.loc[day,risk_columns].fillna(False).astype(bool)
         candidate = score.loc[day, risk_columns].where(eligible & (vol60.loc[day, risk_columns] > 0))
         ranked = candidate.dropna().sort_index().sort_values(ascending=False, kind="stable").index
         if config.rank_buffer_size is not None:

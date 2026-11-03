@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from etf_rotation.backtest import run_backtest
-from etf_rotation.config import CORE_STRATEGY_NAME as STRATEGY_NAME, ETF_NAMES
+from etf_rotation.config import LEGACY_CORE_STRATEGY_NAME as STRATEGY_NAME, LEGACY_CORE_NAMES as ETF_NAMES
 from etf_rotation.data import load_close_prices, load_symbol
 from etf_rotation.factors import FactorSpec, compute_factor
 from etf_rotation.mean_reversion import ReversionRule, capped_risk_weights, defensive_funding_targets, reversion_states

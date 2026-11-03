@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from etf_rotation.config import ETF_NAMES
+from etf_rotation.config import LEGACY_CORE_NAMES as ETF_NAMES
 from etf_rotation.risk_strategy import BOND, RiskConfig, risk_controlled_signals
 from research_reversal import Trial, choose_case, feature_bundle, fixed_trials, targets
 

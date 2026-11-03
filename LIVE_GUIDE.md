@@ -1,8 +1,12 @@
 # 每周实盘信号使用说明
 
-当前默认：**16只核心轮动＋512890独立红利反转**。核心继续用20/40日动量、40日趋势、8%波动目标预算、20日均线反转0.5及前4名缓冲必选第1名。2026-10-21选定红利规则：**MA200／入0%／出+4%／不限日／先现金再国债／账户上限30%**。原核心风险目标保持不变，因此整个账户可能最高100%风险仓、最多4只风险ETF加国债共5只；8%/70%只描述核心目标，不能当作全账户限制。
+当前默认：**17只核心轮动＋512890独立红利反转，共18只**。2026-10-31按用户指令删除尚未启用的513500标普500，在原16只基础上仅新增513180恒生科技，首次纳入信号2026-11-06、首次计划执行11月9日接近收盘；此前周目标仍按原16只。核心继续用20/40日动量、40日趋势、8%波动目标预算、20日均线反转0.5及前4名缓冲必选第1名。红利规则仍为**MA200／入0%／出+4%／不限日／先现金再国债／账户上限30%**。整个账户可能最高100%风险仓、最多4只风险ETF加国债共5只；8%/70%只描述核心目标，不能当作全账户限制。
 
-首次新规则信号为**2026-10-23收盘后**、计划**10月26日接近收盘执行**。卫星从未持有状态启动，不继承研究里的虚拟旧仓；必须在启用后的周信号触发入场才买入。
+红利模块原首次信号为**2026-10-23收盘后**、计划**10月26日接近收盘执行**。本次扩池不重置红利持有状态或原核心缓冲，不继承研究里的虚拟持仓。
+
+日常仍运行`live_signal.py --capital 总资产 --show-scores`。JSON中`core_universe`为配置的17只，`active_core_universe`为该信号日已启用的成员，`applied_strategy`反映实际应用版本。10月30日信号不因周末改池而改写；不要手动按研究回测中的虚拟仓位提前交易。
+
+普通回测默认按实际启用日期。研究新17只完整历史时同时加`--hypothetical-universe --hypothetical-satellite`；只有后一个参数仅放开红利历史，仍遵守核心扩池日期。旧16只研究及相关性审计中的18只研究池均已冻结，不受新默认影响。
 
 ## 准备本地环境
 
@@ -29,10 +33,12 @@ cd C:\path\to\Quant
 | --- | --- | --- |
 | `live_signal.py` | 每周盘后检查计划，日常也可查询状态 | 终端显示状态、信号日、执行日；有效时显示目标比例/金额及评分。完整计划保存在 `output/live_signal.json` |
 | `run_backtest.py` | 检查历史表现 | `output/backtest/` 下的 `equity.csv`、`daily_weights.csv`、`signal_weights.csv`、`trades.csv`、`summary.json`、`equity.png` |
-| `run_backtrader.py` | 用独立订单和现金引擎复核历史结果 | `output/backtrader_comparison_20261023/` 下的 `metrics.csv`、`reconciliation.csv`、逐日净值/实际权重/订单等；报告在 `docs/backtrader_comparison_20261023.md` |
+| `run_backtrader.py` | 用独立订单和现金引擎复核当前17只核心池 | `output/backtrader_comparison_current/` 下的 `metrics.csv`、`reconciliation.csv`、逐日净值/实际权重/订单等；报告在 `docs/backtrader_comparison_current.md`，旧16只报告单独保留 |
 | `plot_benchmarks.py` | 已有回测结果后，与常见宽基比较 | 默认 `output/benchmark_comparison/` 下的 `broad_market_comparison.png`、`drawdown_comparison.png`、`comparison_summary.csv`、`comparison_nav.csv` |
 | `portfolio_tracker.py` | 录入券商真实持仓、入出金并统计真实收益 | 数据库 `data/live_portfolio.sqlite`；`report --export` 导出 `output/live_portfolio_history.csv`、`output/live_portfolio_positions.csv` |
 | `research_overfitting_audit.py` | 重新做2018年以来的参数和过拟合研究 | `output/overfitting_audit_20261021/` 数表与检查记录；报告在 `docs/overfitting_audit_20261021.md` |
+| `research_rsrs.py` | 探索RSRS高低价评分与不同窗口，首次加`--download` | `output/rsrs_20261031/`全部场景、IC、预测R²、预热与成本对照；报告在`docs/rsrs_research_20261031.md`，不改默认 |
+| `analyze_performance.py` | 离线计算默认策略七项指标，核对ETF完整回合及账户周期 | `output/performance_metrics_current/`指标JSON、闭合/开放回合、账户周期和年度汇总；报告`docs/performance_metrics_current.md`；需匹配截止日的Backtrader订单 |
 
 `research_reversal.py`、`research_vol8.py`、`research_dividend_reversion.py`、`research_strategy_optimization.py` 等是历史研究复现入口，有各自冻结的基线；平时不用逐个运行，也不会自动切换实盘默认。查看某入口支持的参数可在命令末尾加 `--help`。
 
@@ -66,7 +72,7 @@ cd C:\path\to\Quant
 .\.venv\Scripts\python.exe plot_benchmarks.py --offline
 ```
 
-普通回测无参数时从2022年开始，默认终点为运行日，默认仅按红利实际启用日期叠加。上例通过 `--end` 固定区间、通过 `--hypothetical-satellite` 研究当前规则的历史表现。`plot_benchmarks.py`默认读取刚生成的 `output/backtest/`，首次缺少宽基行情时去掉绘图命令的 `--offline`；指定其他回测输出目录后，绘图也要传对应的 `--backtest-dir`。
+普通回测无参数时从2022年开始，默认终点为运行日，默认按红利及核心扩池实际启用日期回放。上例只放开红利历史，截至10月20日仍重现原16只池；研究新17只完整历史再加`--hypothetical-universe`。`plot_benchmarks.py`默认读取刚生成的 `output/backtest/`，首次缺少宽基行情时去掉绘图命令的 `--offline`；指定其他回测输出目录后，绘图也要传对应的 `--backtest-dir`。
 
 **按主要研究范围从2018年回测**，使用已准备的独立历史缓存：
 

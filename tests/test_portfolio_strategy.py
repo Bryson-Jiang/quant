@@ -24,7 +24,7 @@ class PortfolioStrategyTests(unittest.TestCase):
     def setUp(self):
         days=pd.bdate_range("2024-01-01",periods=430)
         rng=np.random.default_rng(39)
-        self.core=pd.DataFrame(np.exp(np.cumsum(rng.normal(.0007,.007,(len(days),16)),axis=0)),index=days,columns=ETF_NAMES)
+        self.core=pd.DataFrame(np.exp(np.cumsum(rng.normal(.0007,.007,(len(days),len(ETF_NAMES))),axis=0)),index=days,columns=ETF_NAMES)
         self.history=pd.DataFrame({"512890":np.r_[np.full(210,100.),np.full(220,80.)]},index=days)
         weeks=weekly_signal_dates(days);self.effective=weeks[65]
         execution=days[days.get_loc(self.effective)+1]
@@ -131,11 +131,15 @@ class PortfolioStrategyTests(unittest.TestCase):
                 live_signal.main()
             plan=json.loads(output.read_text(encoding='utf-8'))
         self.assertEqual(plan['strategy'],STRATEGY_NAME)
+        self.assertNotIn('513500',plan['universe'])
+        self.assertNotIn('513500',plan['core_universe'])
+        self.assertNotIn('513500',plan['target_weights'])
+        self.assertNotIn('513500',[row['symbol'] for row in plan['score_details']])
         self.assertEqual(plan['status'],'ready')
         self.assertEqual(plan['target_weights']['512890'],.3)
         self.assertEqual(plan['target_notional_cny']['512890'],30000.)
         self.assertTrue(plan['satellite_details']['active'])
-        self.assertEqual(len(plan['score_details']),15)
+        self.assertEqual(len(plan['score_details']),len(ETF_NAMES)-1)
         self.assertNotIn('512890',[row['symbol'] for row in plan['score_details']])
         self.assertEqual(plan['max_total_etf_positions'],5)
 

@@ -24,13 +24,13 @@ import numpy as np
 import pandas as pd
 
 from etf_rotation.backtest import run_backtest
-from etf_rotation.config import ETF_NAMES
+from etf_rotation.config import LEGACY_CORE_NAMES as ETF_NAMES
 from etf_rotation.data import _client, load_symbol
 from etf_rotation.factors import FactorSpec, compute_factor
 from etf_rotation.mean_reversion import ReversionRule, defensive_funding_targets, reversion_states
-from etf_rotation.portfolio_strategy import load_portfolio_data, portfolio_signals
+from etf_rotation.portfolio_strategy import portfolio_signals
+from etf_rotation.legacy_research import load_portfolio_data, load_rotation_state
 from etf_rotation.risk_strategy import BOND, RiskConfig, weekly_signal_dates
-from etf_rotation.strategy_state import load_rotation_state
 
 ROOT = Path(__file__).resolve().parent
 OUT = ROOT / "output/overfitting_audit_20261021"
@@ -181,8 +181,13 @@ class CoreAudit:
 
     def signals(self,cfg=BASE,*,excluded=(),min_age=0,weekday=4,vol_window=60,
                 cov_window=60,bond_window=60,short_weight=.5,vol_floor=.05,z_clip=3.,
-                decision_dates=None):
+                decision_dates=None,score_override=None,eligibility_mask=None):
         p = self.p
+        for frame in (score_override,eligibility_mask):
+            if frame is not None and (not frame.index.equals(p.index) or not frame.columns.equals(p.columns)):
+                raise ValueError('研究评分或资格掩码未与行情对齐')
+        override=score_override.to_numpy(float) if score_override is not None else None
+        admission=eligibility_mask.fillna(False).to_numpy(bool) if eligibility_mask is not None else None
         short = self.factor("momentum",cfg.short_momentum_days,cfg.momentum_skip_days)
         long = self.factor("momentum",cfg.long_momentum_days,cfg.momentum_skip_days)
         trend = self.factor("trend",cfg.trend_days)
@@ -207,7 +212,9 @@ class CoreAudit:
                 values = score[mask & np.isfinite(score)]
                 spread = np.std(values,ddof=1) if len(values)>1 else 0.
                 score = score+cfg.ma_reversion_strength*spread*np.nan_to_num(np.clip(-z[i]/z_clip,-1,1))
+            if override is not None:score=override[i]
             eligible = mask & (long[i]>0) & (trend[i]>0) & (vol[i]>0) & np.isfinite(score)
+            if admission is not None:eligible &= admission[i]
             # 稳定的代码排序作为平分处理，与生产一致。
             ranked = sorted(np.flatnonzero(eligible),key=lambda j:(-score[j],self.columns[j]))
             if cfg.rank_buffer_size is not None:

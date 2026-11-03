@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .factors import FactorSpec, compute_factor, validate_prices
+from .factors import FactorSpec, RSRSSpec, compute_factor, compute_rsrs, validate_prices, validate_high_low
 
 
 def _price_digest(prices: pd.DataFrame) -> str:
@@ -52,5 +52,32 @@ class FactorStore:
             ]
             db.execute("DELETE FROM factor_values WHERE key = ?", (key,))
             db.executemany("INSERT INTO factor_values (key, date, symbol, value) VALUES (?, ?, ?, ?)", values)
+            db.execute("INSERT OR REPLACE INTO factor_meta (key, price_digest) VALUES (?, ?)", (key, digest))
+            return out
+
+    def get_rsrs(self, high: pd.DataFrame, low: pd.DataFrame, spec: RSRSSpec,
+                 variant: str = "adjusted") -> pd.DataFrame:
+        """高低价、窗口或版本变化即失效；不与仅收盘价的缓存共用键。"""
+        validate_high_low(high, low)
+        if variant not in {"slope", "r_squared", "zscore", "adjusted", "right_skew"}:
+            raise ValueError("未知RSRS版本")
+        key = json.dumps({"name": "rsrs", "implementation": 1, "variant": variant,
+                          "regression_days": spec.regression_days,
+                          "standardization_days": spec.standardization_days}, sort_keys=True)
+        digest = hashlib.sha256((_price_digest(high) + _price_digest(low)).encode()).hexdigest()
+        with closing(sqlite3.connect(self.path)) as db, db:
+            row = db.execute("SELECT price_digest FROM factor_meta WHERE key = ?", (key,)).fetchone()
+            if row is not None and row[0] == digest:
+                out = pd.DataFrame(np.nan, index=high.index, columns=high.columns, dtype=float)
+                for day, symbol, value in db.execute(
+                        "SELECT date, symbol, value FROM factor_values WHERE key = ?", (key,)):
+                    out.at[pd.Timestamp(day), symbol] = value
+                return out
+            out = compute_rsrs(high, low, spec)[variant]
+            records = [(key, day.isoformat(), str(symbol), float(value))
+                       for day, series in out.iterrows() for symbol, value in series.items()
+                       if pd.notna(value)]
+            db.execute("DELETE FROM factor_values WHERE key = ?", (key,))
+            db.executemany("INSERT INTO factor_values (key, date, symbol, value) VALUES (?, ?, ?, ?)", records)
             db.execute("INSERT OR REPLACE INTO factor_meta (key, price_digest) VALUES (?, ?)", (key, digest))
             return out
