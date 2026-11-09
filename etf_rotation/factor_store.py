@@ -81,3 +81,27 @@ class FactorStore:
             db.executemany("INSERT INTO factor_values (key, date, symbol, value) VALUES (?, ?, ?, ?)", records)
             db.execute("INSERT OR REPLACE INTO factor_meta (key, price_digest) VALUES (?, ?)", (key, digest))
             return out
+
+    def get_extended(self, prices: pd.DataFrame, spec, activity: pd.DataFrame | None = None) -> pd.DataFrame:
+        """扩展因子的窗口/模型、收盘与可选量能共同决定缓存；实盘不自动调用。"""
+        from dataclasses import asdict
+        from .extended_factors import compute_extended
+        validate_prices(prices)
+        if activity is not None and (not activity.index.equals(prices.index) or not activity.columns.equals(prices.columns)):
+            raise ValueError('量能缓存输入未对齐')
+        key=json.dumps({'kind':'extended','implementation':1,**asdict(spec)},sort_keys=True)
+        digest=hashlib.sha256((_price_digest(prices)+(_price_digest(activity) if activity is not None else '')).encode()).hexdigest()
+        with closing(sqlite3.connect(self.path)) as db,db:
+            row=db.execute('SELECT price_digest FROM factor_meta WHERE key = ?',(key,)).fetchone()
+            if row is not None and row[0]==digest:
+                out=pd.DataFrame(np.nan,index=prices.index,columns=prices.columns,dtype=float)
+                for day,symbol,value in db.execute('SELECT date,symbol,value FROM factor_values WHERE key = ?',(key,)):
+                    out.at[pd.Timestamp(day),symbol]=value
+                return out
+            out=compute_extended(prices,spec,activity)
+            records=[(key,day.isoformat(),str(symbol),float(value)) for day,series in out.iterrows()
+                     for symbol,value in series.items() if pd.notna(value)]
+            db.execute('DELETE FROM factor_values WHERE key = ?',(key,))
+            db.executemany('INSERT INTO factor_values (key,date,symbol,value) VALUES (?,?,?,?)',records)
+            db.execute('INSERT OR REPLACE INTO factor_meta (key,price_digest) VALUES (?,?)',(key,digest))
+            return out

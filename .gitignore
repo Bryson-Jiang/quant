@@ -23,6 +23,7 @@ htmlcov/
 !/data/rotation_state_20261006.json
 !/data/rotation_state_20261018.json
 !/data/rotation_state_20261031.json
+!/data/rotation_state_20261109.json
 !/data/tushare_token.example.txt
 
 # 账户明细、行情、生成报告及本地文档备份均不上传。

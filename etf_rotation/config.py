@@ -30,8 +30,14 @@ PREVIOUS_STRATEGY_NAME = "weekly_16_etf_fast_40_20_single30"
 BUFFERED_MOMENTUM_STRATEGY_NAME = "weekly_16_etf_fast_40_20_vol7_buffer4_top1_single30"
 LEGACY_CORE_STRATEGY_NAME = "weekly_16_etf_fast_40_20_vol8_ma20a05_buffer4_top1_single30"
 LEGACY_PORTFOLIO_STRATEGY_NAME = "weekly_core16_vol8_ma20a05_div512890_ma200_in0_out4_defense30"
-CORE_STRATEGY_NAME = "weekly_17_etf_fast_40_20_vol8_ma20a05_buffer4_top1_single30"
+PRE_IVOL_CORE_STRATEGY_NAME = "weekly_17_etf_fast_40_20_vol8_ma20a05_buffer4_top1_single30"
 SATELLITE_ETF_NAMES = {"512890": "红利低波ETF（华泰柏瑞）"}
 PORTFOLIO_ETF_NAMES = {**ETF_NAMES, **SATELLITE_ETF_NAMES}
-STRATEGY_NAME = "weekly_core17_vol8_ma20a05_div512890_ma200_in0_out4_defense30"
+PRE_IVOL_PORTFOLIO_STRATEGY_NAME = "weekly_core17_vol8_ma20a05_div512890_ma200_in0_out4_defense30"
+CORE_STRATEGY_NAME = PRE_IVOL_CORE_STRATEGY_NAME + "_ivolm120_q75"
+STRATEGY_NAME = PRE_IVOL_PORTFOLIO_STRATEGY_NAME + "_ivolm120_q75"
+STRATEGY_CODENAME = "澄流120"
+STRATEGY_CODE = "CL120"
+IVOL_COMPARISON_SYMBOLS = ("510300", "159915", "159995", "159875", "159928",
+                           "512660", "515070", "512880", "512800", "561360")
 ADJUST = "hfq"  # Tushare 原始价 × 基金复权因子；不是可成交的真实价格。

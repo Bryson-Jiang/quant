@@ -11,6 +11,7 @@ import pandas as pd
 from .config import BENCHMARK, ETF_NAMES, PORTFOLIO_ETF_NAMES
 from .data import load_close_prices, load_symbol
 from .factor_store import FactorStore
+from .ivol_filter import IVOLFilterResult, market_ivol_filter
 from .mean_reversion import ReversionRule, defensive_funding_targets, reversion_states
 from .risk_strategy import RiskConfig, risk_controlled_signals, weekly_signal_dates
 from .strategy_state import RotationState
@@ -23,6 +24,8 @@ class PortfolioSignals:
     signals: pd.DataFrame
     satellite_states: pd.DataFrame
     hypothetical_satellite_history: bool
+    ivol_filter: IVOLFilterResult | None = None
+    hypothetical_ivol_history: bool = False
 
 
 def load_portfolio_data(start: date, end: date, cache_dir: Path, *,
@@ -41,7 +44,9 @@ def portfolio_signals(core_prices: pd.DataFrame, satellite_history: pd.DataFrame
                       state: RotationState, config: RiskConfig | None = None,
                       store: FactorStore | None = None, *,
                       hypothetical_satellite_history: bool = False,
-                      hypothetical_universe_history: bool = False) -> PortfolioSignals:
+                      hypothetical_universe_history: bool = False,
+                      hypothetical_ivol_history: bool = False,
+                      as_of: date | None = None) -> PortfolioSignals:
     """默认按启用日期从未持有状态重放；全历史卫星模拟须显式请求。"""
     policy=state.dividend_policy
     if policy is None:
@@ -51,8 +56,15 @@ def portfolio_signals(core_prices: pd.DataFrame, satellite_history: pd.DataFrame
         raise ValueError(f"核心行情缺少策略所需{len(symbols)}只ETF")
     config=config or RiskConfig.current_default()
     core_prices=core_prices.loc[:,symbols]
+    activation=state.universe_activation_dates(hypothetical=hypothetical_universe_history)
+    ivol=(market_ivol_filter(core_prices,state.ivol_policy,store,
+                            hypothetical_history=hypothetical_ivol_history,
+                            as_of=as_of,
+                            universe_activation_dates=activation)
+          if state.ivol_policy is not None else None)
     core=risk_controlled_signals(core_prices,config,store,**state.signal_kwargs(core_prices),
-                                universe_activation_dates=state.universe_activation_dates(hypothetical=hypothetical_universe_history))
+                                universe_activation_dates=activation,
+                                eligibility_mask=ivol.eligibility_mask if ivol is not None else None)
     # 不读取查询日以后的行情，连卫星状态的最后一个日期也与核心截止日一致。
     history=satellite_history.loc[:core_prices.index[-1],[policy.symbol]]
     # 上市前没有报价也必须有明确的False状态；NaN的布尔值会误激活卫星。
@@ -71,7 +83,21 @@ def portfolio_signals(core_prices: pd.DataFrame, satellite_history: pd.DataFrame
     prices[policy.symbol]=history[policy.symbol].reindex(prices.index)
     signals=defensive_funding_targets(prices,core,satellite_state.reindex(prices.index),
                                      policy.symbol,policy.max_weight)
-    return PortfolioSignals(prices,core,signals,satellite_state,hypothetical_satellite_history)
+    return PortfolioSignals(prices,core,signals,satellite_state,hypothetical_satellite_history,ivol,hypothetical_ivol_history)
+
+
+def ivol_details(bundle: PortfolioSignals, state: RotationState, signal_day: pd.Timestamp) -> dict:
+    policy=state.ivol_policy;result=bundle.ivol_filter
+    if policy is None or result is None:return {"enabled":False,"effective_for_signal":False}
+    u=result.utility.loc[signal_day]
+    active=bool(result.active.loc[signal_day])
+    return {**policy.metadata(),"enabled":True,"effective_for_signal":active,
+            "simulation_mode":"hypothetical_full_history" if bundle.hypothetical_ivol_history else "from_actual_adoption_date",
+            "model":"market_ols_with_intercept","annualization":252,"residual_std_ddof":1,
+            "valid_comparison_assets":int(u.notna().sum()),
+            "excluded_symbols":list(u.index[(u.notna() & ~result.eligibility_mask.loc[signal_day])]) if active else [],
+            "missing_factor_behavior":"neutral; original trend and momentum requirements still apply",
+            "adoption_note":"2026-11-09收盘执行前按用户指令切换；首次使用11月6日收盘数据，不表示11月6日已采用新规则"}
 
 
 def satellite_details(bundle: PortfolioSignals, state: RotationState,
