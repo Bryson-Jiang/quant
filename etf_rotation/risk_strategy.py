@@ -38,7 +38,7 @@ class RiskConfig:
     def current_default(cls, *, target_vol: float = 0.08,
                         max_risky_weight: float = 0.70,
                         inverse_vol_exponent: float = 1.0) -> RiskConfig:
-        """2026-10-18选择：8%预算、20日均线反转0.5、前4名缓冲必选第1名。"""
+        """默认核心参数；澄流120的IVOL资格过滤由portfolio_strategy按启用日期传入。"""
         base = cls.buffered_momentum(target_vol=target_vol, max_risky_weight=max_risky_weight,
                                      inverse_vol_exponent=inverse_vol_exponent)
         return replace(base, ma_reversion_days=20, ma_reversion_strength=0.5)

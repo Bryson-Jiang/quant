@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from etf_rotation.config import CORE_STRATEGY_NAME, ETF_NAMES, PORTFOLIO_ETF_NAMES, STRATEGY_NAME
+from etf_rotation.config import (CORE_STRATEGY_NAME, ETF_NAMES, PORTFOLIO_ETF_NAMES, STRATEGY_NAME,
+                                 STRATEGY_CODENAME, STRATEGY_CODE)
 from etf_rotation.data import _client
 from etf_rotation.factor_store import FactorStore
 from etf_rotation.factors import FactorSpec, compute_factor
+from etf_rotation.ivol_filter import IVOLFilterResult
 from etf_rotation.risk_strategy import BOND, RiskConfig, risk_controlled_signals, risk_score_components, universe_activation_mask
-from etf_rotation.portfolio_strategy import load_portfolio_data, portfolio_signals, satellite_details
+from etf_rotation.portfolio_strategy import load_portfolio_data, portfolio_signals, satellite_details, ivol_details
 from etf_rotation.strategy_state import load_rotation_state
 
 
@@ -77,7 +80,8 @@ def latest_actionable_week(calendar: pd.DataFrame, as_of: date,
 
 
 def signal_score_details(prices: pd.DataFrame, config: RiskConfig, target: pd.Series,
-                         store: FactorStore | None = None, *, universe_activation_dates: dict | None = None) -> list[dict]:
+                         store: FactorStore | None = None, *, universe_activation_dates: dict | None = None,
+                         ivol_filter: IVOLFilterResult | None = None) -> list[dict]:
     """与正式选仓共用评分函数，解释信号日每只风险ETF的资格及排名。"""
     def factor(spec):
         return store.get(prices, spec) if store is not None else compute_factor(prices, spec)
@@ -94,12 +98,19 @@ def signal_score_details(prices: pd.DataFrame, config: RiskConfig, target: pd.Se
     day = target.name
     risky = prices.columns.drop(BOND)
     eligible = long.loc[day, risky].gt(0) & trend.loc[day, risky].gt(0) & vol.loc[day, risky].gt(0)
+    original_eligible=eligible.copy()
+    if ivol_filter is not None:eligible &= ivol_filter.eligibility_mask.loc[day,risky]
     ranked = components["score"].loc[day, risky].where(eligible).dropna().sort_index().sort_values(ascending=False, kind="stable")
     ranks = {symbol: i+1 for i, symbol in enumerate(ranked.index)}
     rows = []
     finite = lambda value: float(value) if pd.notna(value) else None
     for symbol in list(ranked.index) + [s for s in risky if s not in ranked.index]:
         rows.append({"symbol": symbol, "name": ETF_NAMES[symbol], "eligible": symbol in ranks,
+                     "original_trend_eligible":bool(original_eligible[symbol]),
+                     "ivol_filter_active":bool(ivol_filter.active.loc[day]) if ivol_filter is not None else False,
+                     "ivol_filter_pass":bool(ivol_filter.eligibility_mask.at[day,symbol]) if ivol_filter is not None else True,
+                     "ivol_annualized":finite(ivol_filter.ivol.at[day,symbol]) if ivol_filter is not None else None,
+                     "ivol_normalized_rank":finite((1-ivol_filter.utility.at[day,symbol])/2) if ivol_filter is not None else None,
                      "rank": ranks.get(symbol), "base_score": finite(components["base_score"].at[day, symbol]),
                      "ma_zscore": finite(z.at[day, symbol]) if z is not None else None,
                      "ma_adjustment": finite(components["ma_adjustment"].at[day, symbol]),
@@ -117,7 +128,7 @@ def main() -> None:
                         help="可选账户总资产（人民币），输出目标金额；不是下单数量")
     parser.add_argument("--target-vol", type=float, default=RiskConfig.current_default().target_vol,
                         help="核心轮动的年化风险仓波动预算，默认8%%；卫星叠加后不是全账户上限")
-    parser.add_argument("--show-scores", action="store_true", help="显示合格ETF的动量评分、均线修正与排名")
+    parser.add_argument("--show-scores", action="store_true", help="显示动量评分、均线修正、IVOL过滤与资格排名")
     parser.add_argument("--max-risky-weight", type=float, default=0.70,
                         help="核心风险ETF目标上限，默认70%%；红利卫星另占最多30%%")
     parser.add_argument("--cache-dir", type=Path, default=ROOT / "data" / "cache")
@@ -125,7 +136,7 @@ def main() -> None:
                         help="排名缓冲切换记录；请保留并备份")
     parser.add_argument("--output", type=Path, default=ROOT / "output" / "live_signal.json")
     args = parser.parse_args()
-    if args.capital is not None and args.capital <= 0:
+    if args.capital is not None and (not math.isfinite(args.capital) or args.capital <= 0):
         parser.error("--capital 必须大于零")
     now = datetime.now(SHANGHAI)
     as_of = args.as_of or now.date()
@@ -143,11 +154,12 @@ def main() -> None:
     config = RiskConfig.current_default(target_vol=args.target_vol,
                                         max_risky_weight=args.max_risky_weight)
     state = load_rotation_state(args.state_file)
-    bundle=portfolio_signals(core_prices,satellite_history,state,config,store)
+    bundle=portfolio_signals(core_prices,satellite_history,state,config,store,as_of=as_of)
     target=bundle.signals.loc[pd.Timestamp(signal_day)]
     score_details=signal_score_details(core_prices,config,bundle.core_signals.loc[pd.Timestamp(signal_day)],store,
-                                      universe_activation_dates=state.universe_activation_dates())
+                                      universe_activation_dates=state.universe_activation_dates(),ivol_filter=bundle.ivol_filter)
     dividend=satellite_details(bundle,state,pd.Timestamp(signal_day))
+    ivol=ivol_details(bundle,state,pd.Timestamp(signal_day))
     weights = {symbol: round(float(value), 6) for symbol, value in target.items() if value > 1e-8}
     cash = round(max(0.0, 1.0 - float(target.sum())), 6)
     lot_notional = {}
@@ -158,11 +170,19 @@ def main() -> None:
         if len(quote) != 1 or float(quote.iloc[0]) <= 0:
             raise RuntimeError(f"{symbol} 的信号日原始收盘价缺失，不能估计交易手数")
         lot_notional[symbol] = round(float(quote.iloc[0]) * 100, 2)
+    reference_shares=({code:int(math.floor(weight*args.capital/lot_notional[code]))*100 for code,weight in weights.items()}
+                      if args.capital is not None else None)
+    applied_strategy=STRATEGY_NAME if dividend['effective_for_signal'] else CORE_STRATEGY_NAME
+    if state.ivol_policy is not None and not ivol['effective_for_signal']:
+        applied_strategy=(state.ivol_policy.previous_strategy if dividend['effective_for_signal']
+                          else state.ivol_policy.previous_core_strategy)
+    if state.universe_policy is not None and signal_day<state.universe_policy.effective_signal_date:
+        applied_strategy=state.universe_policy.previous_strategy
     plan = {
         "strategy": STRATEGY_NAME,
-        "applied_strategy": (state.universe_policy.previous_strategy if state.universe_policy is not None
-                              and signal_day<state.universe_policy.effective_signal_date else
-                              STRATEGY_NAME if dividend["effective_for_signal"] else CORE_STRATEGY_NAME),
+        "strategy_codename":STRATEGY_CODENAME,
+        "strategy_code":STRATEGY_CODE,
+        "applied_strategy":applied_strategy,
         "status": status,
         "as_of": as_of.isoformat(),
         "signal_date": signal_day.isoformat(),
@@ -187,6 +207,7 @@ def main() -> None:
         "ma_reversion_strength": config.ma_reversion_strength,
         "score_formula": "(0.5*M20+0.5*M40)/max(vol60,0.05) + 0.5*D*clip(-ma_zscore20/3,-1,1)",
         "score_details": score_details,
+        "ivol_filter_details":ivol,
         "satellite_details":dividend,
         "core_target_weights":{s:round(float(w),6) for s,w in bundle.core_signals.loc[pd.Timestamp(signal_day)].items() if w>1e-8},
         "rotation_state": state.metadata(),
@@ -199,13 +220,20 @@ def main() -> None:
         "estimated_100_share_lot_cny_at_signal_close": lot_notional,
         "target_notional_cny": ({code: round(weight * args.capital, 2) for code, weight in weights.items()}
                                 if args.capital is not None else None),
+        "estimated_target_total_shares_at_signal_close":reference_shares,
+        "reference_share_count_note":"按信号日原始收盘价向下取整100份；为目标总份额，不是净买卖量；不含费用，成交前按现价及实际持仓重算",
+        "estimated_remaining_cash_before_costs_cny":(round(args.capital-sum(reference_shares[s]/100*lot_notional[s] for s in weights),2)
+                                                     if reference_shares is not None else None),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"状态：{status}；信号日：{signal_day}；计划调仓日：{execution_day}；"
+    print(f"策略：{STRATEGY_CODENAME}（{STRATEGY_CODE}）；状态：{status}；信号日：{signal_day}；计划调仓日：{execution_day}；"
           f"核心波动预算 {args.target_vol:.0%}；核心风险仓上限 {args.max_risky_weight:.0%}")
     print("选仓：合格池第1名必选；剩余名额优先保留前4名旧目标，再按评分补足")
     print(f"评分：20/40日动量＋{config.ma_reversion_days}日均线反转，强度{config.ma_reversion_strength:g}")
+    if ivol['enabled']:
+        excluded='、'.join(ivol['excluded_symbols']) or '无'
+        print(f"市场IVOL120：{'已启用' if ivol['effective_for_signal'] else '尚未启用'}；A股类内有效{ivol['valid_comparison_assets']}只；高四分位过滤：{excluded}")
     if state.universe_policy is not None:
         up=state.universe_policy
         print(f"新增标的{'、'.join(up.added_symbols)}：首次纳入信号{up.effective_signal_date}，首次计划执行{up.first_execution_date}；此前计划沿用原16只核心。")
@@ -218,14 +246,20 @@ def main() -> None:
     if status == "ready":
         for code, weight in weights.items():
             amount = f"，目标约 {weight * args.capital:,.0f} 元" if args.capital else ""
-            print(f"  {code} {PORTFOLIO_ETF_NAMES[code]}：{weight:.2%}{amount}")
+            shares=f"，按信号日价格向下取整约{reference_shares[code]}份（目标总份额）" if reference_shares is not None else ""
+            print(f"  {code} {PORTFOLIO_ETF_NAMES[code]}：{weight:.2%}{amount}{shares}")
         print(f"  现金：{cash:.2%}")
+        if reference_shares is not None:
+            print(f"  上述参考总份额取整后余款约{plan['estimated_remaining_cash_before_costs_cny']:,.2f}元（未扣费用）；净买卖量须扣除现有份额，并按成交前现价重算。")
         if args.show_scores:
             print("合格风险ETF评分：")
             for row in score_details:
                 if row["eligible"]:
                     print(f"  第{row['rank']}名 {row['symbol']}：动量{row['base_score']:.6f}，"
                           f"均线修正{row['ma_adjustment']:+.6f}，最终{row['score']:.6f}")
+            for row in score_details:
+                if row['ivol_filter_active'] and not row['ivol_filter_pass']:
+                    print(f"  IVOL过滤 {row['symbol']}：年化残差波动{row['ivol_annualized']:.2%}，类内归一化排名{row['ivol_normalized_rank']:.1%}")
         if args.capital:
             large_lots = {code: value for code, value in lot_notional.items()
                           if value / args.capital >= 0.02}

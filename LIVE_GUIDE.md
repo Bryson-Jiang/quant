@@ -1,12 +1,14 @@
 # 每周实盘信号使用说明
 
+当前默认代号为**澄流120（CL120）**。2026-11-09在原组合上增加120日市场IVOL资格过滤：先排除A股同类中残差波动最高的四分位尾部，再按原评分与缓冲选仓；首次使用11月6日完整数据、11月9日收盘执行。切换前17只状态保存为`data/rotation_state_20261109.json`。[启用说明](docs/cl120_default_20261109.md)包含规则、时间边界和复现方法；RSRS、MACD及风格IVOL未接入默认。
+
 当前默认：**17只核心轮动＋512890独立红利反转，共18只**。2026-10-31按用户指令删除尚未启用的513500标普500，在原16只基础上仅新增513180恒生科技，首次纳入信号2026-11-06、首次计划执行11月9日接近收盘；此前周目标仍按原16只。核心继续用20/40日动量、40日趋势、8%波动目标预算、20日均线反转0.5及前4名缓冲必选第1名。红利规则仍为**MA200／入0%／出+4%／不限日／先现金再国债／账户上限30%**。整个账户可能最高100%风险仓、最多4只风险ETF加国债共5只；8%/70%只描述核心目标，不能当作全账户限制。
 
 红利模块原首次信号为**2026-10-23收盘后**、计划**10月26日接近收盘执行**。本次扩池不重置红利持有状态或原核心缓冲，不继承研究里的虚拟持仓。
 
 日常仍运行`live_signal.py --capital 总资产 --show-scores`。JSON中`core_universe`为配置的17只，`active_core_universe`为该信号日已启用的成员，`applied_strategy`反映实际应用版本。10月30日信号不因周末改池而改写；不要手动按研究回测中的虚拟仓位提前交易。
 
-普通回测默认按实际启用日期。研究新17只完整历史时同时加`--hypothetical-universe --hypothetical-satellite`；只有后一个参数仅放开红利历史，仍遵守核心扩池日期。旧16只研究及相关性审计中的18只研究池均已冻结，不受新默认影响。
+普通回测默认按实际启用日期。研究澄流120完整假设历史时同时加`--hypothetical-universe --hypothetical-satellite --hypothetical-ivol`；三个开关分别放开扩池、红利和IVOL历史。旧16只研究、相关性审计中的18只研究池及本轮切换前17只基线均已冻结，不受新默认影响。
 
 ## 准备本地环境
 
@@ -38,6 +40,7 @@ cd C:\path\to\Quant
 | `portfolio_tracker.py` | 录入券商真实持仓、入出金并统计真实收益 | 数据库 `data/live_portfolio.sqlite`；`report --export` 导出 `output/live_portfolio_history.csv`、`output/live_portfolio_positions.csv` |
 | `research_overfitting_audit.py` | 重新做2018年以来的参数和过拟合研究 | `output/overfitting_audit_20261021/` 数表与检查记录；报告在 `docs/overfitting_audit_20261021.md` |
 | `research_rsrs.py` | 探索RSRS高低价评分与不同窗口，首次加`--download` | `output/rsrs_20261031/`全部场景、IC、预测R²、预热与成本对照；报告在`docs/rsrs_research_20261031.md`，不改默认 |
+| `research_factor_extensions.py` | 探索量能、高波动反转、IVOL代理与MACD，首次先加`--download-only` | `output/factor_extensions_20261109/`完整参数/费用结果、IC、IVOL归因及新增13日核对；报告`docs/factor_extensions_20261109.md`，不改默认 |
 | `analyze_performance.py` | 离线计算默认策略七项指标，核对ETF完整回合及账户周期 | `output/performance_metrics_current/`指标JSON、闭合/开放回合、账户周期和年度汇总；报告`docs/performance_metrics_current.md`；需匹配截止日的Backtrader订单 |
 
 `research_reversal.py`、`research_vol8.py`、`research_dividend_reversion.py`、`research_strategy_optimization.py` 等是历史研究复现入口，有各自冻结的基线；平时不用逐个运行，也不会自动切换实盘默认。查看某入口支持的参数可在命令末尾加 `--help`。

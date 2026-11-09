@@ -53,7 +53,8 @@ def main():
     prices=pd.DataFrame(values,index=values['510300'].index).rename_axis('date')
     state=load_rotation_state(ROOT/'data/rotation_state.json')
     bundle=portfolio_signals(prices[list(ETF_NAMES)],prices[['512890']],state,
-                             hypothetical_satellite_history=True,hypothetical_universe_history=True)
+                             hypothetical_satellite_history=True,hypothetical_universe_history=True,
+                             hypothetical_ivol_history=True)
     meta=json.loads((args.backtrader_dir/'manifest.json').read_text(encoding='utf-8'))
     if (meta['strategy']!=STRATEGY_NAME or meta['end']!=str(args.end)
             or meta['simulation_mode']!='hypothetical_full_history'):

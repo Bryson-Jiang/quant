@@ -2,7 +2,7 @@
 
 python run_backtrader.py
 python run_backtrader.py --start 2022-01-01 --end 2026-10-20
-默认假设整段历史采用当前核心池及红利规则；--from-adoption按两者实际启用日期回放。
+默认假设整段历史采用当前核心池、红利及IVOL规则；--from-adoption按各自实际启用日期回放。
 """
 from __future__ import annotations
 
@@ -59,11 +59,13 @@ def compare(args):
     if core.index[0].date()>args.start:raise ValueError("缓存起点晚于回测起点，请使用data/audit_history完整缓存")
     state=load_rotation_state(ROOT/"data/rotation_state.json")
     bundle=portfolio_signals(core,history,state,hypothetical_satellite_history=not args.from_adoption,
-                             hypothetical_universe_history=not args.from_adoption)
+                             hypothetical_universe_history=not args.from_adoption,
+                             hypothetical_ivol_history=not args.from_adoption)
     prices,signals=bundle.prices,bundle.signals
     mode="from_actual_adoption_date" if args.from_adoption else "hypothetical_full_history"
     json_file(args.output_dir/"manifest.json",{"research_date":date.today().isoformat(),"end":str(end),"requested_start":str(args.start),
        "strategy":STRATEGY_NAME,"simulation_mode":mode,"cost_bps":args.fee_bps+args.slippage_bps,
+       "ivol_simulation_mode":mode,"ivol_policy":state.ivol_policy.metadata() if state.ivol_policy is not None else None,
        "initial_cash_for_normalized_research":args.initial_cash,"protected_before":before,
        "price_hash":hashlib.sha256(pd.util.hash_pandas_object(prices,index=True).values.tobytes()).hexdigest(),
        "target_hash":hashlib.sha256(pd.util.hash_pandas_object(signals,index=True).values.tobytes()).hexdigest(),

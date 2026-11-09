@@ -1,5 +1,7 @@
 # A 股场内 ETF 动量轮动
 
+当前默认代号：**澄流120（CL120）**。2026-11-09按用户指令，在原组合上增加**120日市场IVOL高四分位过滤**：沪深300单因子回归，只比较A股股票ETF；先过滤、再执行原评分与排名缓冲。新规则于11月9日收盘执行前启用，首次使用11月6日完整收盘数据修订尚未执行的目标，未改写此前已执行历史。[启用说明](docs/cl120_default_20261109.md)记录参数、边界和验证；原17只默认状态冻结在`data/rotation_state_20261109.json`。
+
 当前默认策略：**17只ETF核心轮动＋512890红利低波独立卫星，共18只**。2026-10-31相关性研究后按用户指令移除尚未启用的513500标普500，保留新增513180恒生科技；首次新池信号2026-11-06、计划11月9日收盘执行，此前完整周计划仍按原16只重放。核心保留20/40日动量、8%波动目标预算、20日均线反转0.5、前4名缓冲必选第1名、最多3只风险ETF及70%总目标上限。红利继续**MA200、入0%、出+4%、不限日、先现金再国债、账户上限30%**，其原启用日期不变。叠加后最多4只风险ETF加国债共5只，风险总目标最高100%，全账户不受8%/70%硬约束。行情使用Tushare日线、同日复权因子和交易日历；588000未加入核心池。
 
 新加入/删减对照见[相关性与共线性研究](docs/correlation_audit_20261031.md)。当前默认对应报告中的`drop_513500`方案；原18只研究池与差方案保留，便于复现。扩池和红利历史假设分别用`--hypothetical-universe`与`--hypothetical-satellite`显式开启，普通回测和实盘默认遵守实际启用日期。
@@ -35,6 +37,10 @@ python -m unittest discover -s tests
 因子库在`etf_rotation/factors.py`定义十九种价格因子：动量、均线趋势、年化波动率、下行波动率、前高突破、单窗口风险调整动量、趋势效率、短长波动率比、均线偏离标准分、10/30日与5/10日均线同侧持续性、滚动高点回撤与低点涨幅、短期反转、简单移动平均RSI、市场残差反转、回撤后反弹确认、相对大盘强弱、涨跌波动平衡。`FactorSpec`指定因子、交易日窗口及跳过天数；`FactorStore`按需计算并写入SQLite，价格矩阵变化时失效重算。默认实际调用20/40日动量、40日趋势、60日波动率、20日均线偏离标准分及国债60日动量。相对强弱等其他因子供研究。实盘JSON包含原始评分、均线修正、最终评分和资格排名，终端加`--show-scores`可查看合格标的评分。
 
 另保留RSRS高低价因子：`compute_rsrs(high, low, RSRSSpec(N, M))`返回斜率、拟合R²、Z标准分、Z×R²修正版及Z×R²×斜率右偏版；`FactorStore.get_rsrs`按高低价、窗口及版本缓存。高低价须真实取得并使用同日复权因子，不能用收盘价代替。默认策略未调用RSRS。[RSRS研究报告](docs/rsrs_research_20261031.md)保留91场景及全部窗口/成本对照；入口`python research_rsrs.py --download`，复现用`python research_rsrs.py`。
+
+量能、高波动反转、IVOL残差代理及MACD因子在`etf_rotation/extended_factors.py`定义，使用`ExtendedFactorSpec`、`compute_extended`与`FactorStore.get_extended`调用。IVOL主要在A股ETF同类内比较，市场/成长代理不是FF3或期权隐含波动率。[新因子研究](docs/factor_extensions_20261109.md)包含117个固定场景及后设解释对照；首次运行`python research_factor_extensions.py --download-only`，再运行`python research_factor_extensions.py`。当前默认采用市场IVOL120资格过滤，其余新增增强继续供研究；旧研究固定调用切换前17只状态，避免改变原比较基线。
+
+2026-11-09先登记`ivol_market_120_exclude_top_quartile`为候选，同日按用户后续指令启用为澄流120；[参数与状态记录](docs/strategy_candidates.md)保留。在原核心选仓前排除A股同类中市场回归残差波动最高的四分位尾部，不叠加新评分。普通回测按实际启用日期重放；全历史假设须显式加`--hypothetical-ivol`，完整当前方案假设还应加`--hypothetical-universe --hypothetical-satellite`。
 
 默认策略的年化、夏普、卡玛、回撤、完整ETF回合胜率/盈亏比及换手见[七项指标报告](docs/performance_metrics_current.md)，入口`python analyze_performance.py`。该入口离线统计，不切换策略；将账户周期与ETF持仓回合、双边换手与单边等效、金额盈亏比与收益率盈亏比分开，闭合和开放回合均核对终值。
 

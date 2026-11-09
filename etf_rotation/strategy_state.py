@@ -11,7 +11,8 @@ import pandas as pd
 
 from .config import (BUFFERED_MOMENTUM_STRATEGY_NAME, CORE_STRATEGY_NAME, ETF_NAMES,
                      LEGACY_CORE_NAMES, LEGACY_CORE_STRATEGY_NAME, LEGACY_PORTFOLIO_STRATEGY_NAME,
-                     SATELLITE_ETF_NAMES, STRATEGY_NAME)
+                     PRE_IVOL_CORE_STRATEGY_NAME, PRE_IVOL_PORTFOLIO_STRATEGY_NAME,
+                     IVOL_COMPARISON_SYMBOLS, SATELLITE_ETF_NAMES, STRATEGY_NAME, STRATEGY_CODENAME, STRATEGY_CODE)
 from .risk_strategy import BOND
 
 
@@ -56,11 +57,31 @@ class UniversePolicy:
 
 
 @dataclass(frozen=True)
+class IVOLPolicy:
+    benchmark: str
+    window: int
+    min_assets: int
+    max_normalized_rank: float
+    comparison_symbols: tuple[str, ...]
+    adopted_on: date
+    effective_signal_date: date
+    first_execution_date: date
+    previous_strategy: str
+    previous_core_strategy: str
+
+    def metadata(self) -> dict:
+        from dataclasses import asdict
+        return {k: v.isoformat() if isinstance(v,date) else list(v) if isinstance(v,tuple) else v
+                for k,v in asdict(self).items()}
+
+
+@dataclass(frozen=True)
 class RotationState(SelectionAnchor):
     historical_anchors: tuple[SelectionAnchor, ...] = ()
     dividend_policy: DividendPolicy | None = None
     universe_policy: UniversePolicy | None = None
     core_symbols: tuple[str, ...] | None = None
+    ivol_policy: IVOLPolicy | None = None
 
     def universe_activation_dates(self, *, hypothetical: bool = False) -> dict:
         if hypothetical or self.universe_policy is None:return {}
@@ -97,13 +118,15 @@ class RotationState(SelectionAnchor):
             result["dividend_policy"]=self.dividend_policy.metadata()
         if self.universe_policy is not None:
             result["universe_policy"]=self.universe_policy.metadata()
+        if self.ivol_policy is not None:
+            result["ivol_policy"]=self.ivol_policy.metadata()
         return result
 
 
 def load_rotation_state(path: Path, *, expected_strategy: str = STRATEGY_NAME) -> RotationState:
     """缺失或错误时停止发布，避免丢失缓冲历史后静默改变实盘计划。"""
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("schema_version") not in {1, 2, 3, 4} or payload.get("strategy") != expected_strategy:
+    if payload.get("schema_version") not in {1, 2, 3, 4, 5} or payload.get("strategy") != expected_strategy:
         raise ValueError("策略切换记录的版本或策略名称不匹配")
 
     def parse_anchor(item):
@@ -122,8 +145,9 @@ def load_rotation_state(path: Path, *, expected_strategy: str = STRATEGY_NAME) -
     if any(a.effective_signal_date > b.selection_anchor_date for a, b in zip(sequence, sequence[1:])):
         raise ValueError("策略切换锚点必须按时间排序且不能重叠")
     policy=None
-    if payload.get("schema_version") in {3,4}:
-        pairs={STRATEGY_NAME:CORE_STRATEGY_NAME,LEGACY_PORTFOLIO_STRATEGY_NAME:LEGACY_CORE_STRATEGY_NAME}
+    if payload.get("schema_version") in {3,4,5}:
+        pairs={STRATEGY_NAME:CORE_STRATEGY_NAME,LEGACY_PORTFOLIO_STRATEGY_NAME:LEGACY_CORE_STRATEGY_NAME,
+               PRE_IVOL_PORTFOLIO_STRATEGY_NAME:PRE_IVOL_CORE_STRATEGY_NAME}
         if expected_strategy not in pairs or payload.get("core_strategy")!=pairs[expected_strategy]:
             raise ValueError("红利卫星的核心策略版本不匹配")
         item=payload["dividend_policy"]
@@ -139,20 +163,46 @@ def load_rotation_state(path: Path, *, expected_strategy: str = STRATEGY_NAME) -
     elif expected_strategy==STRATEGY_NAME:
         raise ValueError("当前默认必须保有红利卫星启用记录")
     universe=None
-    if payload.get("schema_version")==4:
+    if payload.get("schema_version") in {4,5}:
         item=payload['universe_policy']
         universe=UniversePolicy(tuple(item['added_symbols']),*(date.fromisoformat(item[k]) for k in
                                 ('adopted_on','effective_signal_date','first_execution_date')),item['previous_strategy'])
         added_symbols=set(ETF_NAMES)-set(LEGACY_CORE_NAMES)
-        if (expected_strategy!=STRATEGY_NAME or set(universe.added_symbols)!=added_symbols
+        if (expected_strategy not in {STRATEGY_NAME,PRE_IVOL_PORTFOLIO_STRATEGY_NAME} or set(universe.added_symbols)!=added_symbols
                 or len(universe.added_symbols)!=len(added_symbols) or universe.previous_strategy!=LEGACY_PORTFOLIO_STRATEGY_NAME
                 or not universe.adopted_on<=universe.effective_signal_date<universe.first_execution_date):
             raise ValueError('扩池启用记录无效')
     elif expected_strategy==STRATEGY_NAME:
         raise ValueError('当前默认必须保存扩池启用记录')
-    symbols=tuple(ETF_NAMES) if expected_strategy==STRATEGY_NAME else tuple(LEGACY_CORE_NAMES)
+    ivol=None
+    if payload.get("schema_version")==5:
+        if payload.get('codename')!=STRATEGY_CODENAME or payload.get('code')!=STRATEGY_CODE:
+            raise ValueError('默认策略代号不匹配')
+        item=dict(payload['ivol_policy'])
+        item['comparison_symbols']=tuple(item['comparison_symbols'])
+        for k in ('adopted_on','effective_signal_date','first_execution_date'):
+            item[k]=date.fromisoformat(item[k])
+        ivol=IVOLPolicy(**item)
+        if (expected_strategy!=STRATEGY_NAME or ivol.benchmark!='510300' or ivol.window!=120
+                or ivol.min_assets!=3 or ivol.max_normalized_rank!=.75
+                or ivol.comparison_symbols!=IVOL_COMPARISON_SYMBOLS
+                or ivol.previous_strategy!=PRE_IVOL_PORTFOLIO_STRATEGY_NAME
+                or ivol.previous_core_strategy!=PRE_IVOL_CORE_STRATEGY_NAME
+                or ivol.adopted_on>ivol.first_execution_date
+                or ivol.effective_signal_date>=ivol.first_execution_date):
+            raise ValueError('IVOL过滤参数或启用日期无效')
+    elif expected_strategy==STRATEGY_NAME:
+        raise ValueError('澄流120默认必须保存IVOL过滤启用记录')
+    symbols=tuple(ETF_NAMES) if expected_strategy in {STRATEGY_NAME,PRE_IVOL_PORTFOLIO_STRATEGY_NAME} else tuple(LEGACY_CORE_NAMES)
     return RotationState(latest.selection_anchor_date, latest.effective_signal_date,
-                         latest.initial_risky_selection, history,policy,universe,symbols)
+                         latest.initial_risky_selection, history,policy,universe,symbols,ivol)
+
+
+def load_pre_ivol_rotation_state(path: Path) -> RotationState:
+    """固定2026-11-09切换前17只基线，避免重跑既有因子研究时更换对照。"""
+    path=Path(path)
+    if path.name=='rotation_state.json':path=path.with_name('rotation_state_20261109.json')
+    return load_rotation_state(path,expected_strategy=PRE_IVOL_PORTFOLIO_STRATEGY_NAME)
 
 
 def load_research_rotation_state(root: Path) -> RotationState:

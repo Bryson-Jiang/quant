@@ -1,7 +1,9 @@
 {
-  "schema_version": 4,
-  "strategy": "weekly_core17_vol8_ma20a05_div512890_ma200_in0_out4_defense30",
-  "adopted_on": "2026-10-21",
+  "schema_version": 5,
+  "strategy": "weekly_core17_vol8_ma20a05_div512890_ma200_in0_out4_defense30_ivolm120_q75",
+  "codename": "澄流120",
+  "code": "CL120",
+  "adopted_on": "2026-11-09",
   "selection_anchor_date": "2026-10-09",
   "effective_signal_date": "2026-10-16",
   "initial_risky_selection": [
@@ -20,10 +22,10 @@
       ]
     }
   ],
-  "source": "2026-10-21用户选择MA200入0%、出+4%、不限日、国债现金替换上限30%；保持原核心及缓冲，卫星从未持有状态启用。",
+  "source": "2026-11-09用户将120日市场IVOL过滤设为默认，代号澄流120（CL120）；当日收盘执行前用11月6日完整数据修订尚未执行的目标，历史缓冲及红利状态继续重放。切换前17只状态保存为rotation_state_20261109.json。",
   "state_basis": "缓冲引用前次周目标选仓；按时间重放各次切换锚点，不自动认定券商成交",
-  "core_strategy": "weekly_17_etf_fast_40_20_vol8_ma20a05_buffer4_top1_single30",
-  "core_adopted_on": "2026-10-18",
+  "core_strategy": "weekly_17_etf_fast_40_20_vol8_ma20a05_buffer4_top1_single30_ivolm120_q75",
+  "core_adopted_on": "2026-11-09",
   "core_source": "2026-10-18用户选择8%预算+20日均线反转0.5；用10月9日原7%方案周目标初始化，10月16日信号于10月19日执行。",
   "universe_policy": {
     "added_symbols": ["513180"],
@@ -33,6 +35,18 @@
     "previous_strategy": "weekly_core16_vol8_ma20a05_div512890_ma200_in0_out4_defense30"
   },
   "universe_source": "2026-10-31用户在相关性研究后删除尚未启用的标普500，仅保留新增恒生科技；下一尚未形成周信号起生效，不改写已发布历史计划。算法及红利启用日期保持不变。",
+  "ivol_policy": {
+    "benchmark": "510300",
+    "window": 120,
+    "min_assets": 3,
+    "max_normalized_rank": 0.75,
+    "comparison_symbols": ["510300", "159915", "159995", "159875", "159928", "512660", "515070", "512880", "512800", "561360"],
+    "adopted_on": "2026-11-09",
+    "effective_signal_date": "2026-11-06",
+    "first_execution_date": "2026-11-09",
+    "previous_strategy": "weekly_core17_vol8_ma20a05_div512890_ma200_in0_out4_defense30",
+    "previous_core_strategy": "weekly_17_etf_fast_40_20_vol8_ma20a05_buffer4_top1_single30"
+  },
   "dividend_policy": {
     "symbol": "512890",
     "ma_days": 200,
