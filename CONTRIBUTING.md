@@ -2,7 +2,7 @@
 
 ## 首次使用
 
-1. 克隆私有仓库 `Bryson-Jiang/quant`，用PyCharm打开项目。
+1. 克隆仓库 `Bryson-Jiang/quant`，用PyCharm打开项目。
 2. 创建本地虚拟环境，安装 `requirements.txt`。
 3. 使用自己的Tushare账号、Token和数据权限，参见 [LIVE_GUIDE.md](LIVE_GUIDE.md)。Token放入 `data/tushare_token.txt` 或环境变量 `TUSHARE_TOKEN`。
 4. 首次联网下载行情后再使用 `--offline`。运行 `python -m unittest discover -s tests` 检查本地环境，测试使用构造行情与临时目录，无需真实账户或Tushare Token。

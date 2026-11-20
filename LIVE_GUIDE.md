@@ -41,6 +41,10 @@ cd C:\path\to\Quant
 | `research_overfitting_audit.py` | 重新做2018年以来的参数和过拟合研究 | `output/overfitting_audit_20261021/` 数表与检查记录；报告在 `docs/overfitting_audit_20261021.md` |
 | `research_rsrs.py` | 探索RSRS高低价评分与不同窗口，首次加`--download` | `output/rsrs_20261031/`全部场景、IC、预测R²、预热与成本对照；报告在`docs/rsrs_research_20261031.md`，不改默认 |
 | `research_factor_extensions.py` | 探索量能、高波动反转、IVOL代理与MACD，首次先加`--download-only` | `output/factor_extensions_20261109/`完整参数/费用结果、IC、IVOL归因及新增13日核对；报告`docs/factor_extensions_20261109.md`，不改默认 |
+| `research_cl120_pool_expansion.py` | 在CL120下重测较宽行业扩池；先`--screen`、再`--download`，随后直接运行 | `output/cl120_pool_expansion_20261109/`35种方案、成本/准入/归因结果；报告`docs/cl120_pool_expansion_20261109.md`与两张图，默认不变；需先备齐本轮因子研究的18只基线缓存 |
+| `analyze_pool_correlations.py` | 离线画候选对现有18只的相关性热图，比较长期、最近一年和下跌期 | `output/pool_correlations_20261109/`相关性/样本数/稳定性/排序；报告`docs/pool_correlations_20261109.md`与两张热图，需已有上一行的缓存及结果，不改默认 |
+| `research_ivol_impact.py` | 离线统计IVOL改变选仓的频率、代表案例和18只ETF持仓时间 | `output/ivol_impact_20261110/`全部周事件、条件回放、逐日权重与检查；报告`docs/ivol_impact_20261110.md`及4张图，需已有因子研究的18只行情缓存；`--report-only`只重画已有结果，不改默认 |
+| `research_rsi.py` | 测试两种RSI、不同窗口和评分方式；先直接运行，再用`--download-latest`追加观察 | `output/rsi_20261120/`84组评分结果、IC/预测R²、年度选参与稳健性检查；报告`docs/rsi_research_20261120.md`及3张图，主比较读取冻结行情，新增数据用独立缓存，不改实盘 |
 | `analyze_performance.py` | 离线计算默认策略七项指标，核对ETF完整回合及账户周期 | `output/performance_metrics_current/`指标JSON、闭合/开放回合、账户周期和年度汇总；报告`docs/performance_metrics_current.md`；需匹配截止日的Backtrader订单 |
 
 `research_reversal.py`、`research_vol8.py`、`research_dividend_reversion.py`、`research_strategy_optimization.py` 等是历史研究复现入口，有各自冻结的基线；平时不用逐个运行，也不会自动切换实盘默认。查看某入口支持的参数可在命令末尾加 `--help`。

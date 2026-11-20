@@ -16,7 +16,7 @@
 
 ## 团队协作
 
-仓库共享源代码、因子库定义、测试、策略初始化状态及研究结论。`data/`默认排除，仅共享`.gitkeep`、当前`rotation_state.json`、历史研究锚点`rotation_state_20261006.json`/`rotation_state_20261018.json`/`rotation_state_20261031.json`和空白Token示例；真实Token、个人账户数据库与快照、行情缓存、因子缓存、生成报告、虚拟环境均保留在成员本地。
+仓库共享源代码、因子库定义、测试、策略初始化状态及研究结论。`data/`默认排除，仅共享`.gitkeep`、当前`rotation_state.json`、历史研究锚点`rotation_state_20261006.json`/`rotation_state_20261018.json`/`rotation_state_20261031.json`/`rotation_state_20261109.json`和空白Token示例；真实Token、个人账户数据库与快照、行情缓存、因子缓存、生成报告、虚拟环境均保留在成员本地。
 
 `rotation_state.json` 只含公开策略参数和周目标代码，用于一致重放排名缓冲；它不是账户持仓明细。更改选仓规则或这个锚点时，请在分支上修改并通过Pull Request讨论。协作步骤见 [CONTRIBUTING.md](CONTRIBUTING.md)。文档中的 `output/` 路径是本地生成结果，克隆后需自行运行对应脚本；仓库未分发Tushare行情。
 
@@ -34,13 +34,21 @@ python -m unittest discover -s tests
 
 真实账户的周度持仓、入出金和收益另用 `portfolio_tracker.py` 记在 `data/live_portfolio.sqlite`。录入模板是 `portfolio_entry.example.json`；操作步骤和收益口径见 [LIVE_GUIDE.md](LIVE_GUIDE.md)。这部分只读你提供的券商记录，不会把回测净值当作真实账户收益。
 
-因子库在`etf_rotation/factors.py`定义十九种价格因子：动量、均线趋势、年化波动率、下行波动率、前高突破、单窗口风险调整动量、趋势效率、短长波动率比、均线偏离标准分、10/30日与5/10日均线同侧持续性、滚动高点回撤与低点涨幅、短期反转、简单移动平均RSI、市场残差反转、回撤后反弹确认、相对大盘强弱、涨跌波动平衡。`FactorSpec`指定因子、交易日窗口及跳过天数；`FactorStore`按需计算并写入SQLite，价格矩阵变化时失效重算。默认实际调用20/40日动量、40日趋势、60日波动率、20日均线偏离标准分及国债60日动量。相对强弱等其他因子供研究。实盘JSON包含原始评分、均线修正、最终评分和资格排名，终端加`--show-scores`可查看合格标的评分。
+因子库在`etf_rotation/factors.py`定义二十种价格因子：动量、均线趋势、年化波动率、下行波动率、前高突破、单窗口风险调整动量、趋势效率、短长波动率比、均线偏离标准分、10/30日与5/10日均线同侧持续性、滚动高点回撤与低点涨幅、短期反转、简单移动平均RSI、Wilder平滑RSI、市场残差反转、回撤后反弹确认、相对大盘强弱、涨跌波动平衡。`FactorSpec`指定因子、交易日窗口及跳过天数；`FactorStore`按需计算并写入SQLite，价格矩阵变化时失效重算。默认实际调用20/40日动量、40日趋势、60日波动率、20日均线偏离标准分及国债60日动量。RSI及相对强弱等其他因子供研究。实盘JSON包含原始评分、均线修正、最终评分和资格排名，终端加`--show-scores`可查看合格标的评分。
 
 另保留RSRS高低价因子：`compute_rsrs(high, low, RSRSSpec(N, M))`返回斜率、拟合R²、Z标准分、Z×R²修正版及Z×R²×斜率右偏版；`FactorStore.get_rsrs`按高低价、窗口及版本缓存。高低价须真实取得并使用同日复权因子，不能用收盘价代替。默认策略未调用RSRS。[RSRS研究报告](docs/rsrs_research_20261031.md)保留91场景及全部窗口/成本对照；入口`python research_rsrs.py --download`，复现用`python research_rsrs.py`。
 
 量能、高波动反转、IVOL残差代理及MACD因子在`etf_rotation/extended_factors.py`定义，使用`ExtendedFactorSpec`、`compute_extended`与`FactorStore.get_extended`调用。IVOL主要在A股ETF同类内比较，市场/成长代理不是FF3或期权隐含波动率。[新因子研究](docs/factor_extensions_20261109.md)包含117个固定场景及后设解释对照；首次运行`python research_factor_extensions.py --download-only`，再运行`python research_factor_extensions.py`。当前默认采用市场IVOL120资格过滤，其余新增增强继续供研究；旧研究固定调用切换前17只状态，避免改变原比较基线。
 
 2026-11-09先登记`ivol_market_120_exclude_top_quartile`为候选，同日按用户后续指令启用为澄流120；[参数与状态记录](docs/strategy_candidates.md)保留。在原核心选仓前排除A股同类中市场回归残差波动最高的四分位尾部，不叠加新评分。普通回测按实际启用日期重放；全历史假设须显式加`--hypothetical-ivol`，完整当前方案假设还应加`--hypothetical-universe --hypothetical-satellite`。
+
+CL120启用后的[行业扩池研究](docs/cl120_pool_expansion_20261109.md)筛查17个产品、比较35种固定方案；7只主层与2只观察均未形成跨区间/费用的收益与夏普改善，默认池保持不变。复现入口`research_cl120_pool_expansion.py`，独立缓存和输出带`cl120_pool_expansion_20261109`名称；首次先`--screen`、再`--download`，详情见报告。
+
+候选与现有18只ETF的[相关性热力图](docs/pool_correlations_20261109.md)用`python analyze_pool_correlations.py`离线复现，含红利卫星、近期/下跌日和有效样本数。电力、地产的重复度相对较低，但原扩池回测尚未改善默认；本分析未新增相关性交易门槛。
+
+IVOL的[持仓影响报告](docs/ivol_impact_20261110.md)统计直接过滤与历史缓冲的不同影响，展示有利/踏空案例，以及18只ETF的全期平均仓位和持有天数。2022以来247次可执行周目标中直接改变65次（26.3%），完整路径名单不同79次（32.0%）。离线复现`python research_ivol_impact.py`，沿用截至11月6日的冻结行情，不改变默认或实盘计划。
+
+新增[RSI评分研究](docs/rsi_research_20261120.md)：84个固定方案比较SMA/Wilder、7/14/28日窗口及四种评分方向，包含费用、IC/预测R²、年度选参、参数邻域及新增10日观察。28日过热扣分仅小幅改善历史指标，收益集中在2024年两次直接改变，继续观察、未接入CL120实盘。入口`python research_rsi.py`；因子用`FactorSpec("rsi", N)`或`FactorSpec("rsi_wilder", N)`调用。
 
 默认策略的年化、夏普、卡玛、回撤、完整ETF回合胜率/盈亏比及换手见[七项指标报告](docs/performance_metrics_current.md)，入口`python analyze_performance.py`。该入口离线统计，不切换策略；将账户周期与ETF持仓回合、双边换手与单边等效、金额盈亏比与收益率盈亏比分开，闭合和开放回合均核对终值。
 
