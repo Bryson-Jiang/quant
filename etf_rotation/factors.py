@@ -32,7 +32,7 @@ FACTOR_NAMES = frozenset({
     "breakout", "risk_adjusted_momentum", "trend_efficiency", "volatility_ratio",
     "ma_zscore", "ma_persistence_10_30", "ma_persistence_5_10",
     "rolling_drawdown", "rolling_runup",
-    "short_term_reversal", "rsi", "residual_reversal",
+    "short_term_reversal", "rsi", "rsi_wilder", "residual_reversal",
     "drawdown_rebound", "relative_strength",
     "downside_balance",
 })
@@ -48,6 +48,21 @@ def validate_prices(prices: pd.DataFrame) -> None:
         raise ValueError("价格必须为正且有限")
 
 
+def _wilder_mean(values: pd.DataFrame, window: int) -> pd.DataFrame:
+    """完整window段的SMA初始化，再以alpha=1/window递推；缺值使状态重置。"""
+    seed = values.rolling(window, min_periods=window).mean().to_numpy(float)
+    raw = values.to_numpy(float)
+    result = np.full(raw.shape, np.nan)
+    previous = np.full(raw.shape[1], np.nan)
+    for i, row in enumerate(raw):
+        valid = np.isfinite(row)
+        previous = np.where(valid & np.isfinite(previous),
+                            ((window - 1) * previous + row) / window,
+                            np.where(valid, seed[i], np.nan))
+        result[i] = previous
+    return pd.DataFrame(result, index=values.index, columns=values.columns)
+
+
 def compute_factor(prices: pd.DataFrame, spec: FactorSpec) -> pd.DataFrame:
     """因子值仅依赖 t 日及以前的观测，信号日无报价时值为 NaN。"""
     validate_prices(prices)
@@ -61,6 +76,12 @@ def compute_factor(prices: pd.DataFrame, spec: FactorSpec) -> pd.DataFrame:
         change = shifted.diff()
         gain = change.clip(lower=0).rolling(spec.window, min_periods=spec.window).mean()
         loss = -change.clip(upper=0).rolling(spec.window, min_periods=spec.window).mean()
+        total = gain + loss
+        out = (100 * gain / total.replace(0, np.nan)).where(total.ne(0), 50).where(total.notna()).clip(0, 100)
+    elif spec.name == "rsi_wilder":
+        change = shifted.diff()
+        gain = _wilder_mean(change.clip(lower=0), spec.window)
+        loss = _wilder_mean(-change.clip(upper=0), spec.window)
         total = gain + loss
         out = (100 * gain / total.replace(0, np.nan)).where(total.ne(0), 50).where(total.notna()).clip(0, 100)
     elif spec.name in {"short_term_reversal", "residual_reversal", "relative_strength", "drawdown_rebound"}:
